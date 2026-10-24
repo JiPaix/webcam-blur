@@ -41,9 +41,10 @@ def blur_background(frame, alpha, sigma):
 
 
 def matting_interval(fps, quality):
-    """Run the model on every n-th frame: "low" updates the cut-out about 30 times a second,
-    reusing it in between; the others run it on every frame."""
-    return max(1, int(fps // 30)) if quality == "low" else 1
+    """Run the model on every n-th frame: "low" updates the cut-out at least about 30 times a
+    second, reusing it in between; the others run it on every frame. ``fps`` is the rate the
+    webcam really delivers: many lower it in dim light (e.g. 60 -> 30)."""
+    return max(1, int(fps * 1.1 / 30)) if quality == "low" else 1
 
 
 def send(**message):
@@ -66,10 +67,14 @@ def run(camera, out, mode, settings, stop):
         engine = None
         next_check = 0.0
         a, frame_no = None, 0
+        frames, counted_since, fps = 0, time.monotonic(), mode.fps
         while not stop.is_set():
             now = time.monotonic()
             if now >= next_check:
                 next_check = now + 1.0
+                if frames >= 10:
+                    fps = frames / (now - counted_since)
+                    frames, counted_since = 0, now
                 # The GPU subprocess starts in parallel; the CPU covers the first frames.
                 quality, provider = settings.get("quality", "low"), settings.get("gpu_provider")
                 model = GPU_MODELS[quality]
@@ -79,7 +84,7 @@ def run(camera, out, mode, settings, stop):
                     gpu = None
                 if provider and gpu is None:
                     gpu = matting.GpuMatter(*size, provider, model)
-                interval = matting_interval(mode.fps, quality)
+                interval = matting_interval(fps, quality)
                 if gpu is None:
                     current = settings.get("cpu_reason", "cpu")
                 else:
@@ -94,6 +99,7 @@ def run(camera, out, mode, settings, stop):
             ok, frame = cap.read()
             if not ok:
                 raise StreamError("error.read_camera")
+            frames += 1
             if frame.shape[1] != w or frame.shape[0] != h:
                 frame = cv2.resize(frame, (w, h))
             if settings["blur"]:

@@ -67,7 +67,8 @@ def test_gpu_input_size(size, quality, expected):
 
 
 @pytest.mark.parametrize("fps, quality, expected", [
-    (30, "low", 1), (60, "low", 2), (50, "low", 1), (15, "low", 1), (60, "standard", 1), (60, "high", 1),
+    (30, "low", 1), (29.8, "low", 1), (60, "low", 2), (59.3, "low", 2), (50, "low", 1), (15, "low", 1),
+    (90, "low", 3), (60, "standard", 1), (60, "high", 1),
 ])
 def test_matting_interval(fps, quality, expected):
     assert matting_interval(fps, quality) == expected

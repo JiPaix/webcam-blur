@@ -306,6 +306,7 @@ def test_gpu_path_in_live_pipeline(pipeline, tmp_path, monkeypatch):
     pipeline.config.data["use_gpu"] = True
     worker = worker_of(pipeline)
     out_path = tmp_path / "gpu.npy"
+    shm_before = {f for f in os.listdir("/dev/shm") if f.startswith("psm_")}  # e.g. a real stream's
     try:
         proc = start_consumer(worker.output_path, 60, out_path)
         assert wait_for(lambda: worker.engine == "gpu", 40, 0.25), f"engine stayed {worker.engine!r}"
@@ -323,7 +324,7 @@ def test_gpu_path_in_live_pipeline(pipeline, tmp_path, monkeypatch):
     assert wait_for(lambda: not worker.in_use, IDLE_GRACE + 5)
     assert worker.proc is None, "stream subprocess still running after the stream"
     assert not [p for p in our_pids() if "webcam_blur.stream" in cmdline(p)]
-    assert not [f for f in os.listdir("/dev/shm") if f.startswith("psm_")], "shared memory leaked"
+    assert {f for f in os.listdir("/dev/shm") if f.startswith("psm_")} <= shm_before, "shared memory leaked"
 
 
 def test_unplug_and_replug(pipeline):
