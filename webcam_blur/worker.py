@@ -86,12 +86,11 @@ class CameraWorker(threading.Thread):
 
     def gpu_wanted(self):
         """(want GPU, reason if not possible)."""
-        if not self.config["use_gpu"]:
+        state = matting.gpu_support.state
+        if not self.config["use_gpu"] or state == "checking":
             return False, "cpu"
-        if matting.gpu_provider() is None:
-            return False, "no_gpu"
-        if not matting.have_onnx():
-            return False, "no_onnx"
+        if state != "ok":
+            return False, {"no_onnx": "no_onnx"}.get(state, "no_gpu")
         return True, None
 
     def stream(self, out, fmt, w, h):
@@ -117,7 +116,7 @@ class CameraWorker(threading.Thread):
                     # The GPU subprocess starts in parallel; the CPU covers the first frames.
                     want, reason = self.gpu_wanted()
                     if want and gpu is None:
-                        gpu = matting.GpuMatter(w, h, matting.gpu_provider())
+                        gpu = matting.GpuMatter(w, h, matting.gpu_support.provider)
                     elif not want and gpu is not None:
                         gpu.close()
                         gpu = None

@@ -8,10 +8,12 @@
   the GPU while no app uses a camera.
 """
 
+import base64
 import hashlib
 import multiprocessing as mp
 import os
 import sys
+import threading
 import urllib.request
 from multiprocessing import shared_memory
 from pathlib import Path
@@ -65,6 +67,82 @@ def ensure_models():
 def gpu_provider():
     available = ort.get_available_providers()
     return next((p for p in GPU_PROVIDERS if p in available), None)
+
+
+# y = x + x on a [1, 16] tensor: enough to prove a GPU provider really runs here.
+PROBE_MODEL = base64.b64decode(
+    "CAgSC3dlYmNhbS1ibHVyOkEKDgoBeAoBeBIBeSIDQWRkEgVwcm9iZVoTCgF4Eg4KDAgBEggKAggBCgIIEGITCgF5Eg4KDAgB"
+    "EggKAggBCgIIEEIECgAQDQ==")
+
+
+def _probe_process(conn, provider):
+    try:
+        sess = ort.InferenceSession(PROBE_MODEL, providers=[provider])
+        if sess.get_providers()[0] != provider:
+            raise RuntimeError(f"{provider} fell back to {sess.get_providers()[0]}")
+        y = sess.run(None, {"x": np.ones((1, 16), np.float32)})[0]
+        if not np.allclose(y, 2.0):
+            raise RuntimeError("wrong result")
+        conn.send("ok")
+    except Exception as e:
+        conn.send(f"{type(e).__name__}: {e}")
+
+
+def probe(provider, timeout=60):
+    """Run the probe model on ``provider`` in a throwaway process. Returns None if it works,
+    else the reason. A separate process keeps a broken driver from crashing or hanging the
+    app, and leaves nothing allocated on the GPU afterwards."""
+    ctx = mp.get_context("spawn")
+    conn, child = ctx.Pipe()
+    proc = ctx.Process(target=_probe_process, args=(child, provider), daemon=True)
+    proc.start()
+    child.close()
+    try:
+        if not conn.poll(timeout):
+            return "timed out"
+        result = conn.recv()
+    except EOFError:
+        result = f"probe process crashed (exit code {proc.exitcode})"
+    finally:
+        proc.join(timeout=5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
+        conn.close()
+    return None if result == "ok" else result
+
+
+class GpuSupport:
+    """Whether GPU inference works on this machine, checked once at startup.
+
+    ``state``: checking | ok | no_onnx (GPU works, python-onnx missing) | unsupported
+    """
+
+    def __init__(self):
+        self.state = "checking"
+        self.provider = None
+        self.detail = ""
+
+    def check(self, on_done=None):
+        def run():
+            provider = gpu_provider()
+            if provider is None:
+                self.state, self.detail = "unsupported", "onnxruntime has no GPU execution provider"
+            else:
+                error = probe(provider)
+                if error:
+                    self.state, self.detail = "unsupported", f"{provider}: {error}"
+                else:
+                    self.provider = provider
+                    self.state = "ok" if have_onnx() else "no_onnx"
+            if self.state == "unsupported":
+                print(f"GPU acceleration unavailable ({self.detail})", file=sys.stderr, flush=True)
+            if on_done:
+                on_done()
+        threading.Thread(target=run, daemon=True, name="gpu-check").start()
+
+
+gpu_support = GpuSupport()
 
 
 def have_onnx():

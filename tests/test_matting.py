@@ -125,3 +125,36 @@ def test_gpu_subprocess_reports_errors(frame):
     finally:
         gpu.close()
     assert not gpu.proc.is_alive()
+
+
+def test_probe_accepts_a_working_provider():
+    assert matting.probe("CPUExecutionProvider") is None
+
+
+def test_probe_rejects_a_broken_provider():
+    assert matting.probe("NoSuchExecutionProvider")
+
+
+def wait_checked(support):
+    done = []
+    support.check(on_done=lambda: done.append(True))
+    deadline = time.monotonic() + 60
+    while not done:
+        assert time.monotonic() < deadline, "GPU check never finished"
+        time.sleep(0.05)
+
+
+@pytest.mark.parametrize("provider, onnx_installed, expected", [
+    (None, True, "unsupported"),                         # CPU-only onnxruntime
+    ("NoSuchExecutionProvider", True, "unsupported"),    # provider listed but not working
+    ("CPUExecutionProvider", False, "no_onnx"),          # works, python-onnx missing
+    ("CPUExecutionProvider", True, "ok"),
+])
+def test_gpu_support_states(monkeypatch, provider, onnx_installed, expected):
+    monkeypatch.setattr(matting, "gpu_provider", lambda: provider)
+    monkeypatch.setattr(matting, "have_onnx", lambda: onnx_installed)
+    support = matting.GpuSupport()
+    assert support.state == "checking"
+    wait_checked(support)
+    assert support.state == expected
+    assert support.provider == (provider if expected in ("ok", "no_onnx") else None)

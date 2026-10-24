@@ -6,10 +6,9 @@ pkgdesc="Background blur for any webcam, as virtual cameras usable in every app 
 arch=('any')
 url="https://github.com/JiPaix/webcam-blur"
 license=('GPL-3.0-or-later')
-depends=('python' 'python-numpy' 'python-opencv' 'python-onnxruntime' 'python-pyqt6' 'python-pyudev')
+depends=('python' 'python-numpy' 'python-onnx' 'python-onnxruntime' 'python-opencv' 'python-pyqt6' 'python-pyudev')
 makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
-optdepends=('python-onnx: GPU acceleration'
-            'python-onnxruntime-rocm: AMD GPU acceleration (MIGraphX)'
+optdepends=('python-onnxruntime-rocm: AMD GPU acceleration (MIGraphX)'
             'python-onnxruntime-cuda: NVIDIA GPU acceleration'
             'v4l2loopback-dkms: if your kernel does not ship the v4l2loopback module')
 install=webcam-blur.install

@@ -50,12 +50,13 @@ cd webcam-blur/packaging/arch
 makepkg -si
 ```
 
-For GPU acceleration, also install `python-onnx` and the onnxruntime build for your GPU:
+pacman asks which onnxruntime build to install: pick `python-onnxruntime-rocm` for an
+AMD GPU, `python-onnxruntime-cuda` for NVIDIA, or `python-onnxruntime-cpu`. You can
+switch later, e.g. `sudo pacman -S python-onnxruntime-rocm`.
 
-```sh
-sudo pacman -S python-onnx python-onnxruntime-rocm   # AMD
-sudo pacman -S python-onnx python-onnxruntime-cuda   # NVIDIA
-```
+At startup the app runs a tiny test model on the GPU. *Use GPU* only appears in the
+menu if that test works. Otherwise the CPU model is used. The reason is logged
+(`journalctl --user -t webcam-blur` or the terminal).
 
 Then start **Webcam Blur** from your app menu. Tick *Start at login* in its tray menu
 to keep it running.
@@ -67,8 +68,9 @@ v4l2loopback from source there.
 
 ### Other distributions / from source
 
-Requirements: Python ≥ 3.11, PyQt6, OpenCV, NumPy, pyudev, onnxruntime (plus
-`onnx` for GPU), and the v4l2loopback module.
+Requirements: Python ≥ 3.11, PyQt6, OpenCV, NumPy, pyudev, onnx, onnxruntime (a GPU
+build such as `onnxruntime-gpu` for NVIDIA, or ROCm/MIGraphX for AMD), and the
+v4l2loopback module (≥ 0.13).
 
 1. Install the system files (as root):
 

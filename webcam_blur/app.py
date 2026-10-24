@@ -93,10 +93,14 @@ class Tray:
             group.addAction(act)
             sub.addAction(act)
 
-        act = m.addAction(tr("menu.use_gpu"))
-        act.setCheckable(True)
-        act.setChecked(self.config["use_gpu"])
-        act.toggled.connect(lambda on: self.config.__setitem__("use_gpu", on))
+        # Only offered where the startup check ran a model on the GPU successfully.
+        if matting.gpu_support.state == "ok":
+            act = m.addAction(tr("menu.use_gpu"))
+            act.setCheckable(True)
+            act.setChecked(self.config["use_gpu"])
+            act.toggled.connect(lambda on: self.config.__setitem__("use_gpu", on))
+        elif matting.gpu_support.state == "no_onnx":
+            m.addAction(tr("menu.use_gpu_needs_onnx")).setEnabled(False)
 
         m.addSeparator()
         act = m.addAction(tr("menu.autostart"))
@@ -118,7 +122,7 @@ class Tray:
                 act.setChecked(not any_on)
 
     def refresh(self):
-        camera_set = tuple(sorted(self.manager.workers))
+        camera_set = (tuple(sorted(self.manager.workers)), matting.gpu_support.state)
         if camera_set != self.camera_set:
             self.camera_set = camera_set
             self.build_menu()
@@ -208,6 +212,7 @@ def main():
     manager = Manager(config)
     tray = Tray(app, manager, config)
     manager.start()
+    matting.gpu_support.check(on_done=manager.changed.emit)
     # Let Python handle SIGINT/SIGTERM while Qt's event loop runs.
     tick = QTimer(interval=500, timeout=lambda: None)
     tick.start()

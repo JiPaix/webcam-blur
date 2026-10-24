@@ -238,8 +238,8 @@ def test_blur_off_passes_the_image_through(pipeline, tmp_path):
 
 def test_gpu_path_in_live_pipeline(pipeline, tmp_path, monkeypatch):
     """The GPU subprocess (here on onnxruntime's CPU provider) takes over, then goes away."""
-    monkeypatch.setattr(matting, "gpu_provider", lambda: "CPUExecutionProvider")
-    monkeypatch.setattr(matting, "have_onnx", lambda: True)
+    monkeypatch.setattr(matting.gpu_support, "state", "ok")
+    monkeypatch.setattr(matting.gpu_support, "provider", "CPUExecutionProvider")
     pipeline.config.data["use_gpu"] = True
     worker = worker_of(pipeline)
     out_path = tmp_path / "gpu.npy"

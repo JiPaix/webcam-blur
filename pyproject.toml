@@ -9,10 +9,7 @@ description = "Background blur for any webcam, as virtual cameras usable in ever
 readme = "README.md"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.11"
-dependencies = ["numpy", "opencv-python", "onnxruntime", "PyQt6", "pyudev"]
-
-[project.optional-dependencies]
-gpu = ["onnx"]
+dependencies = ["numpy", "onnx", "onnxruntime", "opencv-python", "PyQt6", "pyudev"]
 
 [project.scripts]
 webcam-blur = "webcam_blur.app:main"

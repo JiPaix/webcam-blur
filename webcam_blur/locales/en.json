@@ -10,6 +10,7 @@
   "menu.no_cameras": "No webcam detected",
   "menu.strength": "Blur strength",
   "menu.use_gpu": "Use GPU",
+  "menu.use_gpu_needs_onnx": "Use GPU (install python-onnx)",
   "menu.autostart": "Start at login",
   "menu.quit": "Quit",
 

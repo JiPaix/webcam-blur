@@ -10,6 +10,7 @@
   "menu.no_cameras": "Aucune webcam détectée",
   "menu.strength": "Intensité du flou",
   "menu.use_gpu": "Utiliser le GPU",
+  "menu.use_gpu_needs_onnx": "Utiliser le GPU (installer python-onnx)",
   "menu.autostart": "Lancer à l'ouverture de session",
   "menu.quit": "Quitter",
 
