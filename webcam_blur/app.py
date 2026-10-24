@@ -18,6 +18,7 @@ from . import i18n, matting, v4l2
 from .config import STRENGTHS, Config
 from .i18n import tr
 from .manager import Manager
+from .resources import ResourceMeter
 
 AUTOSTART = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "autostart" / "webcam-blur.desktop"
 
@@ -65,6 +66,11 @@ class Tray:
         manager.changed.connect(self.refresh)
         self.timer = QTimer(interval=3000, timeout=self.refresh)
         self.timer.start()
+        self.meter = ResourceMeter()
+        self.usage = None
+        self.resources = None
+        self.resource_timer = QTimer(interval=2000, timeout=self.update_resources)
+        self.resource_timer.start()
         self.refresh()
         self.tray.show()
         if manager.error:
@@ -122,6 +128,9 @@ class Tray:
         act.setCheckable(True)
         act.setChecked(AUTOSTART.exists())
         act.toggled.connect(set_autostart)
+        self.resources = m.addAction("")
+        self.resources.setEnabled(False)
+        self.update_resources(sample=False)
         m.addAction(tr("menu.quit"), self.app.quit)
 
     def set_camera(self, key, setting, value):
@@ -171,6 +180,30 @@ class Tray:
         live = any(w.in_use for w, *_ in self.cameras)
         self.tray.setIcon(self.icons[(any_on, live)])
         self.tray.setToolTip(tr("app.tooltip_title") + "\n" + "\n".join(lines))
+
+
+    def update_resources(self, sample=True):
+        if sample or self.usage is None:
+            self.usage = self.meter.sample()
+        if self.resources is not None:
+            self.resources.setText(resources_text(self.usage))
+
+
+def number(value, decimals):
+    return f"{value:.{decimals}f}".replace(".", tr("number.decimal"))
+
+
+def size_text(n):
+    if n >= 1e9:
+        return tr("unit.gb", value=number(n / 1e9, 1))
+    return tr("unit.mb", value=number(n / 1e6, 0))
+
+
+def resources_text(usage):
+    cpu = number(usage["cpu"], 1 if usage["cpu"] < 10 else 0)
+    if usage["vram"] is None:
+        return tr("menu.resources", cpu=cpu, ram=size_text(usage["ram"]))
+    return tr("menu.resources_vram", cpu=cpu, ram=size_text(usage["ram"]), vram=size_text(usage["vram"]))
 
 
 def mode_text(mode):
