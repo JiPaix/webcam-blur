@@ -9,59 +9,18 @@
 """
 
 import base64
-import hashlib
 import multiprocessing as mp
-import os
-import sys
-import threading
-import urllib.request
 from multiprocessing import shared_memory
-from pathlib import Path
 
 import cv2
 import numpy as np
 import onnxruntime as ort
 
-MODEL_URL = "https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/"
-MODELS = {
-    "rvm_mobilenetv3_fp32.onnx": "88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828",
-    "rvm_resnet50_fp32.onnx": "25db300fcb6ee27f941a1b52c97856e8d1f13c7f35817f81a612f89af0e8a85c",
-}
-CPU_MODEL = "rvm_mobilenetv3_fp32.onnx"
-GPU_MODEL = "rvm_resnet50_fp32.onnx"
-
-USER_DATA = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "webcam-blur"
-CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "webcam-blur"
-MODEL_DIRS = [Path(p) for p in (os.environ.get("WEBCAM_BLUR_MODEL_DIR"),) if p] + [
-    Path("/usr/share/webcam-blur/models"), USER_DATA / "models"]
+from .models import CACHE, CPU_MODEL, GPU_MODEL, MODELS, model_path  # noqa: F401  (re-exported)
 
 # GPU execution providers, in order of preference.
 GPU_PROVIDERS = ("MIGraphXExecutionProvider", "CUDAExecutionProvider", "ROCMExecutionProvider")
 GPU_TIMEOUT = 2.0  # seconds to wait for one GPU frame before falling back to CPU
-
-
-def model_path(name):
-    for folder in MODEL_DIRS:
-        if (folder / name).is_file():
-            return folder / name
-    return None
-
-
-def ensure_models():
-    """Download missing models to the user data dir (source checkouts; packages ship them)."""
-    for name, sha in MODELS.items():
-        if model_path(name):
-            continue
-        dest = USER_DATA / "models" / name
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        print(f"Downloading {name}…", file=sys.stderr, flush=True)
-        tmp = dest.with_suffix(".part")
-        urllib.request.urlretrieve(MODEL_URL + name, tmp)
-        digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
-        if digest != sha:
-            tmp.unlink()
-            raise RuntimeError(f"{name}: checksum mismatch ({digest})")
-        tmp.replace(dest)
 
 
 def gpu_provider():
@@ -75,7 +34,8 @@ PROBE_MODEL = base64.b64decode(
     "EggKAggBCgIIEEIECgAQDQ==")
 
 
-def _probe_process(conn, provider):
+def try_provider(provider):
+    """Run the probe model on ``provider``. Returns None if it works, else the reason."""
     try:
         sess = ort.InferenceSession(PROBE_MODEL, providers=[provider])
         if sess.get_providers()[0] != provider:
@@ -83,66 +43,21 @@ def _probe_process(conn, provider):
         y = sess.run(None, {"x": np.ones((1, 16), np.float32)})[0]
         if not np.allclose(y, 2.0):
             raise RuntimeError("wrong result")
-        conn.send("ok")
+        return None
     except Exception as e:
-        conn.send(f"{type(e).__name__}: {e}")
+        return f"{type(e).__name__}: {e}"
 
 
-def probe(provider, timeout=60):
-    """Run the probe model on ``provider`` in a throwaway process. Returns None if it works,
-    else the reason. A separate process keeps a broken driver from crashing or hanging the
-    app, and leaves nothing allocated on the GPU afterwards."""
-    ctx = mp.get_context("spawn")
-    conn, child = ctx.Pipe()
-    proc = ctx.Process(target=_probe_process, args=(child, provider), daemon=True)
-    proc.start()
-    child.close()
-    try:
-        if not conn.poll(timeout):
-            return "timed out"
-        result = conn.recv()
-    except EOFError:
-        result = f"probe process crashed (exit code {proc.exitcode})"
-    finally:
-        proc.join(timeout=5)
-        if proc.is_alive():
-            proc.kill()
-            proc.join()
-        conn.close()
-    return None if result == "ok" else result
-
-
-class GpuSupport:
-    """Whether GPU inference works on this machine, checked once at startup.
-
-    ``state``: checking | ok | no_onnx (GPU works, python-onnx missing) | unsupported
-    """
-
-    def __init__(self):
-        self.state = "checking"
-        self.provider = None
-        self.detail = ""
-
-    def check(self, on_done=None):
-        def run():
-            provider = gpu_provider()
-            if provider is None:
-                self.state, self.detail = "unsupported", "onnxruntime has no GPU execution provider"
-            else:
-                error = probe(provider)
-                if error:
-                    self.state, self.detail = "unsupported", f"{provider}: {error}"
-                else:
-                    self.provider = provider
-                    self.state = "ok" if have_onnx() else "no_onnx"
-            if self.state == "unsupported":
-                print(f"GPU acceleration unavailable ({self.detail})", file=sys.stderr, flush=True)
-            if on_done:
-                on_done()
-        threading.Thread(target=run, daemon=True, name="gpu-check").start()
-
-
-gpu_support = GpuSupport()
+def detect_gpu():
+    """{"state": ok | no_onnx | unsupported, "provider", "detail"}. Meant to run in a throwaway
+    process (see gpucheck): a broken driver cannot crash the app, and nothing stays on the GPU."""
+    provider = gpu_provider()
+    if provider is None:
+        return {"state": "unsupported", "provider": None, "detail": "onnxruntime has no GPU execution provider"}
+    error = try_provider(provider)
+    if error:
+        return {"state": "unsupported", "provider": None, "detail": f"{provider}: {error}"}
+    return {"state": "ok" if have_onnx() else "no_onnx", "provider": provider, "detail": ""}
 
 
 def have_onnx():

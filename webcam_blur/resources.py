@@ -1,17 +1,15 @@
-"""Resource use of the app and its GPU subprocesses, read from /proc and sysfs."""
+"""Resource use of the app and its subprocesses, read from /proc and sysfs."""
 
 import os
 import time
 
 KFD_PROCS = "/sys/class/kfd/kfd/proc"  # AMD ROCm: per-process VRAM
 CLOCK_TICKS = os.sysconf("SC_CLK_TCK")
-PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 
 
 def our_pids():
-    """This process and its direct children (the GPU subprocesses)."""
-    me = os.getpid()
-    pids = [me]
+    """This process and all its descendants (stream subprocesses and their GPU subprocesses)."""
+    children = {}
     for entry in os.listdir("/proc"):
         if entry.isdigit():
             try:
@@ -20,8 +18,12 @@ def our_pids():
                     ppid = int(f.read().rsplit(")", 1)[1].split()[1])
             except (OSError, IndexError, ValueError):
                 continue
-            if ppid == me:
-                pids.append(int(entry))
+            children.setdefault(ppid, []).append(int(entry))
+    pids, todo = [], [os.getpid()]
+    while todo:
+        pid = todo.pop()
+        pids.append(pid)
+        todo.extend(children.get(pid, ()))
     return pids
 
 
@@ -31,9 +33,15 @@ def _cpu_ticks(pid):
     return int(fields[11]) + int(fields[12])  # utime + stime
 
 
-def _rss(pid):
-    with open(f"/proc/{pid}/statm") as f:
-        return int(f.read().split()[1]) * PAGE_SIZE
+def _pss(pid):
+    """Proportional memory: private memory plus a share of the libraries used by several
+    processes (Qt, for one, is shared with the desktop)."""
+    with open(f"/proc/{pid}/smaps_rollup") as f:
+        for line in f:
+            if line.startswith("Pss:"):
+                return int(line.split()[1]) * 1024
+    return 0
+
 
 
 def _vram(pid):
@@ -66,7 +74,7 @@ class ResourceMeter:
         for pid in our_pids():
             try:
                 ticks[pid] = _cpu_ticks(pid)
-                ram += _rss(pid)
+                ram += _pss(pid)
             except OSError:  # exited meanwhile
                 continue
             used = _vram(pid)

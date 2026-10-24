@@ -10,7 +10,6 @@ read/write access to /dev/v4l2loopback; in CI these tests run as root.
 """
 
 import json
-import multiprocessing as mp
 import os
 import subprocess
 import sys
@@ -23,9 +22,10 @@ import numpy as np
 import pytest
 from conftest import FRAME, PERSON, TEXTURED, detail, mean_abs_diff
 
-from webcam_blur import cameras, matting, v4l2
+from webcam_blur import cameras, gpucheck, v4l2
 from webcam_blur.cameras import Camera
 from webcam_blur.config import Config
+from webcam_blur.resources import our_pids
 from webcam_blur.worker import IDLE_GRACE
 
 pytestmark = [pytest.mark.v4l2, pytest.mark.usefixtures("models")]
@@ -44,21 +44,18 @@ def wait_for(condition, timeout, interval=0.1):
     return condition()
 
 
-def our_handles(path):
-    """How many file descriptors this process has open on ``path``."""
-    target = os.path.realpath(path)
-    count = 0
-    for fd in os.listdir("/proc/self/fd"):
-        try:
-            count += os.readlink(f"/proc/self/fd/{fd}") == target
-        except OSError:
-            pass
-    return count
-
-
 def webcam_opened_by_worker(webcam):
-    # The fake webcam's own feeder keeps one handle open; the worker's capture adds another.
-    return our_handles(webcam.path) > 1
+    # The fake webcam's feeder runs in this test process, which readers_of() leaves out:
+    # any reader is the stream subprocess's capture.
+    return v4l2.readers_of(webcam.path) > 0
+
+
+def cmdline(pid):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return f.read().replace(b"\0", b" ").decode(errors="replace")
+    except OSError:
+        return ""
 
 
 def start_consumer(device, seconds, out):
@@ -88,6 +85,8 @@ def advertised_fps(path):
         fcntl.ioctl(fd, 0xC0CC5615, parm, True)  # VIDIOC_G_PARM
         num, den = struct.unpack_from("<II", parm, 12)
         return den / num if num else None
+    except OSError:  # EINVAL while the device is being reconfigured
+        return None
     finally:
         os.close(fd)
 
@@ -128,12 +127,20 @@ def qt_app():
     return QCoreApplication.instance() or QCoreApplication([])
 
 
+TEST_LABELS = (LABEL, "Second Cam (blur)", "webcam-blur test input", "webcam-blur probe",
+               "webcam-blur hotplug probe")
+
+
 @pytest.fixture(scope="module")
 def control():
     try:
         ctl = v4l2.LoopbackControl()
     except OSError as e:
         pytest.skip(f"/dev/v4l2loopback not usable: {e}")
+    # Devices left behind by an interrupted earlier run would make label checks lie.
+    for nr, label in ctl.devices().items():
+        if label in TEST_LABELS:
+            assert wait_for(lambda nr=nr: ctl.remove(nr), 30, 0.5), f"stale test device {label!r} is still in use"
     yield ctl
     ctl.close()
 
@@ -222,7 +229,7 @@ def test_app_gets_blurred_frames(pipeline, webcam, tmp_path):
     out_path = tmp_path / "blur.npy"
     proc = start_consumer(worker.output_path, 8, out_path)
     assert wait_for(lambda: worker.in_use, 5), "an app reading the virtual camera must start the stream"
-    assert webcam_opened_by_worker(webcam)
+    assert wait_for(lambda: webcam_opened_by_worker(webcam), 10), "the stream should open the webcam"
     stats, out = finish_consumer(proc, out_path)
     print(f"\nconsumer stats: {stats}")
     assert stats["frames"] > 0, "no frames from the virtual camera"
@@ -235,6 +242,7 @@ def test_app_gets_blurred_frames(pipeline, webcam, tmp_path):
     # Once the app is gone, the real webcam is released.
     assert wait_for(lambda: not worker.in_use, IDLE_GRACE + 5)
     assert wait_for(lambda: not webcam_opened_by_worker(webcam), 3)
+    assert worker.proc is None, "the stream subprocess (and its models) must be gone when idle"
 
 
 def test_blur_off_passes_the_image_through(pipeline, tmp_path):
@@ -293,8 +301,8 @@ def test_resolution_choice(pipeline, tmp_path):
 
 def test_gpu_path_in_live_pipeline(pipeline, tmp_path, monkeypatch):
     """The GPU subprocess (here on onnxruntime's CPU provider) takes over, then goes away."""
-    monkeypatch.setattr(matting.gpu_support, "state", "ok")
-    monkeypatch.setattr(matting.gpu_support, "provider", "CPUExecutionProvider")
+    monkeypatch.setattr(gpucheck.gpu_support, "state", "ok")
+    monkeypatch.setattr(gpucheck.gpu_support, "provider", "CPUExecutionProvider")
     pipeline.config.data["use_gpu"] = True
     worker = worker_of(pipeline)
     out_path = tmp_path / "gpu.npy"
@@ -308,7 +316,8 @@ def test_gpu_path_in_live_pipeline(pipeline, tmp_path, monkeypatch):
     for name in TEXTURED:
         assert detail(out, name) < 0.3 * detail(FRAME, name), f"{name} should be blurred"
     assert wait_for(lambda: not worker.in_use, IDLE_GRACE + 5)
-    assert wait_for(lambda: not mp.active_children(), 5), "GPU subprocess still running after the stream"
+    assert worker.proc is None, "stream subprocess still running after the stream"
+    assert not [p for p in our_pids() if "webcam_blur.stream" in cmdline(p)]
     assert not [f for f in os.listdir("/dev/shm") if f.startswith("psm_")], "shared memory leaked"
 
 

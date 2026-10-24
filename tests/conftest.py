@@ -20,7 +20,8 @@ if not os.environ.get("WEBCAM_BLUR_TEST_INSTALLED"):
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
-from webcam_blur import i18n, matting  # noqa: E402
+from webcam_blur import i18n  # noqa: E402
+from webcam_blur import models as model_files  # noqa: E402
 
 i18n.setup("en")  # also for module-scoped fixtures, which run before the autouse one below
 DATA = Path(__file__).parent / "data"
@@ -77,7 +78,7 @@ def frame():
 
 @pytest.fixture(scope="session")
 def models():
-    matting.ensure_models()
+    model_files.ensure_models()
 
 
 @pytest.fixture(autouse=True)

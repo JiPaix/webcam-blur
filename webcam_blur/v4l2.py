@@ -7,9 +7,6 @@ import struct
 import time
 from dataclasses import dataclass
 
-import cv2
-import numpy as np
-
 
 def fourcc(s):
     return struct.unpack("<I", s.encode())[0]
@@ -107,30 +104,35 @@ def _wait_node(path, timeout=5.0):
 
 
 # --- Loopback output ----------------------------------------------------------
+# The tray process opens the device and sets its format; while an app reads it, the stream
+# subprocess writes frames through the same file descriptor. Frames are YUYV.
 
 VIDIOC_S_FMT = 0xC0D05605   # _IOWR('V', 5, struct v4l2_format), sizeof == 208
 VIDIOC_S_PARM = 0xC0CC5616  # _IOWR('V', 22, struct v4l2_streamparm), sizeof == 204
 V4L2_BUF_TYPE_VIDEO_OUTPUT = 2
 V4L2_FIELD_NONE = 1
 V4L2_COLORSPACE_SRGB = 8
-
-# Can OpenCV produce YUYV? Otherwise fall back to I420.
-_YUYV_CODE = getattr(cv2, "COLOR_BGR2YUV_YUY2", None)
+YUYV_BLACK = bytes((16, 128))  # one pixel (BT.601, as OpenCV's BGR2YUV_YUY2)
 
 
 class LoopbackOutput:
     def __init__(self, path, width, height):
-        self.width, self.height = width, height
-        self.fd = os.open(path, os.O_RDWR)
-        if _YUYV_CODE is not None:
-            pixfmt, bpl, size = fourcc("YUYV"), width * 2, width * height * 2
-        else:
-            pixfmt, bpl, size = fourcc("YU12"), width, width * height * 3 // 2
-        fmt = struct.pack("<I4x12I", V4L2_BUF_TYPE_VIDEO_OUTPUT, width, height, pixfmt,
-                          V4L2_FIELD_NONE, bpl, size, V4L2_COLORSPACE_SRGB, 0, 0, 0, 0, 0)
+        self._setup(os.open(path, os.O_RDWR), width, height)
+        fmt = struct.pack("<I4x12I", V4L2_BUF_TYPE_VIDEO_OUTPUT, width, height, fourcc("YUYV"),
+                          V4L2_FIELD_NONE, width * 2, width * height * 2, V4L2_COLORSPACE_SRGB, 0, 0, 0, 0, 0)
         fmt += b"\0" * (208 - len(fmt))
         fcntl.ioctl(self.fd, VIDIOC_S_FMT, fmt)
-        self.black = self.convert(np.zeros((height, width, 3), np.uint8))
+
+    @classmethod
+    def attach(cls, fd, width, height):
+        """Write to a device already opened and configured by another process."""
+        out = cls.__new__(cls)
+        out._setup(fd, width, height)
+        return out
+
+    def _setup(self, fd, width, height):
+        self.fd, self.width, self.height = fd, width, height
+        self.black = YUYV_BLACK * (width * height)
 
     def set_fps(self, fps):
         """Advertise the frame rate to apps (best effort: older drivers may refuse)."""
@@ -142,28 +144,38 @@ class LoopbackOutput:
         except OSError:
             pass
 
-    def convert(self, bgr):
-        if _YUYV_CODE is not None:
-            return cv2.cvtColor(bgr, _YUYV_CODE)
-        return cv2.cvtColor(bgr, cv2.COLOR_BGR2YUV_I420)
-
     def write(self, bgr):
-        os.write(self.fd, self.convert(bgr).tobytes())
+        """Write one BGR frame (stream subprocess only: needs OpenCV)."""
+        os.write(self.fd, bgr_to_yuyv(bgr))
 
     def write_black(self):
-        os.write(self.fd, self.black.tobytes())
+        os.write(self.fd, self.black)
 
     def close(self):
         os.close(self.fd)
 
 
-def readers_of(path):
-    """Number of processes (other than us) that have ``path`` open."""
-    own_pid = os.getpid()
+def bgr_to_yuyv(bgr):
+    import cv2  # imported here: the tray process never loads OpenCV
+    code = getattr(cv2, "COLOR_BGR2YUV_YUY2", None)
+    if code is not None:
+        return cv2.cvtColor(bgr, code).tobytes()
+    import numpy as np  # OpenCV < 4.7: pack YUYV by hand
+    yuv = cv2.cvtColor(bgr, cv2.COLOR_BGR2YUV)
+    yuyv = np.empty((bgr.shape[0], bgr.shape[1], 2), np.uint8)
+    yuyv[..., 0] = yuv[..., 0]
+    yuyv[:, 0::2, 1] = ((yuv[:, 0::2, 1].astype(np.uint16) + yuv[:, 1::2, 1]) // 2)
+    yuyv[:, 1::2, 1] = ((yuv[:, 0::2, 2].astype(np.uint16) + yuv[:, 1::2, 2]) // 2)
+    return yuyv.tobytes()
+
+
+def readers_of(path, exclude=()):
+    """Number of processes, other than us and ``exclude``, that have ``path`` open."""
+    skip = {os.getpid(), *exclude}
     target = os.path.realpath(path)
     count = 0
     for pid in os.listdir("/proc"):
-        if not pid.isdigit() or int(pid) == own_pid:
+        if not pid.isdigit() or int(pid) in skip:
             continue
         fd_dir = f"/proc/{pid}/fd"
         try:

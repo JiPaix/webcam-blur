@@ -14,7 +14,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QAction, QActionGroup, QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import i18n, matting, v4l2
+from . import gpucheck, i18n, models, v4l2
 from .config import STRENGTHS, Config
 from .i18n import tr
 from .manager import Manager
@@ -115,12 +115,12 @@ class Tray:
             sub.addAction(act)
 
         # Only offered where the startup check ran a model on the GPU successfully.
-        if matting.gpu_support.state == "ok":
+        if gpucheck.gpu_support.state == "ok":
             act = m.addAction(tr("menu.use_gpu"))
             act.setCheckable(True)
             act.setChecked(self.config["use_gpu"])
             act.toggled.connect(lambda on: self.config.__setitem__("use_gpu", on))
-        elif matting.gpu_support.state == "no_onnx":
+        elif gpucheck.gpu_support.state == "no_onnx":
             m.addAction(tr("menu.use_gpu_needs_onnx")).setEnabled(False)
 
         m.addSeparator()
@@ -147,7 +147,7 @@ class Tray:
 
     def refresh(self):
         layout = (tuple((k, len(w.modes)) for k, w in sorted(self.manager.workers.items())),
-                  matting.gpu_support.state)
+                  gpucheck.gpu_support.state)
         if layout != self.layout:
             self.layout = layout
             self.build_menu()
@@ -254,7 +254,7 @@ def main():
         return 0
     config = Config()
     i18n.setup(config["language"])
-    matting.ensure_models()
+    models.ensure_models()
 
     app = QApplication(sys.argv)
     app.setApplicationName("webcam-blur")
@@ -273,7 +273,7 @@ def main():
     manager = Manager(config)
     tray = Tray(app, manager, config)
     manager.start()
-    matting.gpu_support.check(on_done=manager.changed.emit)
+    gpucheck.gpu_support.check(on_done=manager.changed.emit)
     # Let Python handle SIGINT/SIGTERM while Qt's event loop runs.
     tick = QTimer(interval=500, timeout=lambda: None)
     tick.start()

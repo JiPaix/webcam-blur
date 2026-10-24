@@ -13,7 +13,7 @@ import pytest
 from conftest import BACKGROUND, PERSON, TEXTURED, detail, mean_abs_diff, region
 
 from webcam_blur import matting
-from webcam_blur.worker import blur_background
+from webcam_blur.stream import blur_background
 
 pytestmark = pytest.mark.usefixtures("models")
 
@@ -127,21 +127,9 @@ def test_gpu_subprocess_reports_errors(frame):
     assert not gpu.proc.is_alive()
 
 
-def test_probe_accepts_a_working_provider():
-    assert matting.probe("CPUExecutionProvider") is None
-
-
-def test_probe_rejects_a_broken_provider():
-    assert matting.probe("NoSuchExecutionProvider")
-
-
-def wait_checked(support):
-    done = []
-    support.check(on_done=lambda: done.append(True))
-    deadline = time.monotonic() + 60
-    while not done:
-        assert time.monotonic() < deadline, "GPU check never finished"
-        time.sleep(0.05)
+def test_try_provider():
+    assert matting.try_provider("CPUExecutionProvider") is None
+    assert matting.try_provider("NoSuchExecutionProvider")
 
 
 @pytest.mark.parametrize("provider, onnx_installed, expected", [
@@ -150,11 +138,9 @@ def wait_checked(support):
     ("CPUExecutionProvider", False, "no_onnx"),          # works, python-onnx missing
     ("CPUExecutionProvider", True, "ok"),
 ])
-def test_gpu_support_states(monkeypatch, provider, onnx_installed, expected):
+def test_detect_gpu(monkeypatch, provider, onnx_installed, expected):
     monkeypatch.setattr(matting, "gpu_provider", lambda: provider)
     monkeypatch.setattr(matting, "have_onnx", lambda: onnx_installed)
-    support = matting.GpuSupport()
-    assert support.state == "checking"
-    wait_checked(support)
-    assert support.state == expected
-    assert support.provider == (provider if expected in ("ok", "no_onnx") else None)
+    result = matting.detect_gpu()
+    assert result["state"] == expected
+    assert result["provider"] == (provider if expected in ("ok", "no_onnx") else None)
