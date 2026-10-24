@@ -20,7 +20,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed git openssh github-cli namcap \
             python-build python-installer python-setuptools python-wheel \
-            python-numpy python-opencv python-onnxruntime-cpu python-pyqt6 python-pyudev python-onnx
+            python-numpy python-opencv python-onnxruntime-cpu python-pyqt6 python-pyudev
 
       - uses: actions/checkout@v4
 

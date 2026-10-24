@@ -1,19 +1,13 @@
-"""Person matting and blur on the public-domain test portrait (CPU only, no device needed).
+"""Person matting (CPU, onnxruntime) and blur on the public-domain test portrait. The GPU
+path (ncnn, Vulkan) is in test_ncnn.py."""
 
-The "GPU" pipeline is exercised with onnxruntime's CPU provider: model freezing, the
-subprocess, shared memory and its clean shutdown are the same as on a real GPU.
-"""
-
-import os
-import time
 
 import numpy as np
-import onnxruntime as ort
 import pytest
 from conftest import BACKGROUND, PERSON, TEXTURED, detail, mean_abs_diff, region
 
 from webcam_blur import matting
-from webcam_blur.stream import blur_background, matting_interval
+from webcam_blur.stream import MAX_INTERVAL, adapt_interval, blur_background, matting_interval
 
 pytestmark = pytest.mark.usefixtures("models")
 
@@ -33,9 +27,10 @@ def assert_good_matte(a):
         assert region(a, name).mean() < 0.05, f"{name} should be background"
 
 
-@pytest.mark.parametrize("quality", ["low", "standard"])
+@pytest.mark.parametrize("quality", ["low", "standard", "high"])
 def test_cpu_matting(frame, quality):
-    matter = matting.CpuMatter(matting.CpuMatter.create_session(), matting.CPU_WIDTH[quality])
+    model = matting.QUALITY_MODELS[quality]
+    matter = matting.CpuMatter(matting.CpuMatter.create_session(model=model), matting.CPU_WIDTH[quality], model)
     a = warm_alpha(matter, frame)
     assert a.shape == frame.shape[:2]
     assert_good_matte(a)
@@ -74,6 +69,28 @@ def test_matting_interval(fps, quality, expected):
     assert matting_interval(fps, quality) == expected
 
 
+def test_slow_model_runs_less_often():
+    # "high" on a slow CPU at 60 fps: 25 ms model + 5 ms rest per frame, busy all the time.
+    n = 1
+    for _ in range(3):
+        n = adapt_interval(n, 1, load=0.98, model_time=0.025, rest_time=0.005, fps=60)
+    assert n == 4
+    assert adapt_interval(MAX_INTERVAL, 1, 0.99, 0.2, 0.005, 60) == MAX_INTERVAL
+
+
+def test_interval_comes_back_when_there_is_room():
+    # Switched to a lighter quality: 4 ms model now, plenty of time per frame.
+    assert adapt_interval(4, 1, load=0.3, model_time=0.004, rest_time=0.004, fps=60) == 3
+    assert adapt_interval(1, 1, load=0.3, model_time=0.004, rest_time=0.004, fps=60) == 1
+    assert adapt_interval(2, 2, load=0.3, model_time=0.004, rest_time=0.004, fps=60) == 2  # quality's own
+    # Just keeping up: going back would overload again.
+    assert adapt_interval(2, 1, load=0.6, model_time=0.012, rest_time=0.006, fps=60) == 2
+    # Busy but keeping up (e.g. "standard" at 60 fps on a fast CPU: 89 % of the time): no change.
+    assert adapt_interval(1, 1, load=0.89, model_time=0.011, rest_time=0.004, fps=60) == 1
+    # ...and back after a busy moment pushed it up.
+    assert adapt_interval(2, 1, load=0.5, model_time=0.011, rest_time=0.004, fps=60) == 1
+
+
 def test_cpu_matting_other_resolution(frame):
     import cv2
     small = cv2.resize(frame, (640, 360), interpolation=cv2.INTER_AREA)
@@ -97,88 +114,3 @@ def test_blur_strengths_are_ordered(frame):
     a = warm_alpha(matting.CpuMatter(matting.CpuMatter.create_session()), frame)
     values = [detail(blur_background(frame, a, s), "flag") for s in (3.0, 6.0, 12.0)]
     assert values[0] > values[1] > values[2]
-
-
-@pytest.mark.parametrize("quality", ["standard", "high"])
-def test_frozen_model_matches_original(frame, quality):
-    """The static-shape model built for GPU providers computes the same thing."""
-    h, w = frame.shape[:2]
-    model = matting.GPU_MODELS[quality]
-    path = matting.frozen_model(model, w, h)
-    frozen = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
-    original = ort.InferenceSession(str(matting.model_path(model)), providers=["CPUExecutionProvider"])
-    shapes = {i.name: i.shape for i in frozen.get_inputs()}
-    assert shapes["src"] == [1, 3, h, w]
-    assert "downsample_ratio" not in shapes
-    x = (frame[..., ::-1].astype(np.float32) / 255).transpose(2, 0, 1)[None].copy()
-    rec = [np.zeros(shapes[f"r{k}i"], np.float32) for k in range(1, 5)]
-    rec_o = [np.zeros((1, 1, 1, 1), np.float32)] * 4
-    for _ in range(3):
-        _, pha_f, *rec = frozen.run(None, {"src": x, **{f"r{k}i": rec[k - 1] for k in range(1, 5)}})
-        _, pha_o, *rec_o = original.run(None, {
-            "src": x, **{f"r{k}i": rec_o[k - 1] for k in range(1, 5)},
-            "downsample_ratio": np.array([matting.downsample_ratio(w, h)], np.float32)})
-    assert np.abs(pha_f - pha_o).max() < 1e-3
-    assert_good_matte(pha_f[0, 0])
-
-
-def shm_entries():
-    return {f for f in os.listdir("/dev/shm") if f.startswith("psm_")}
-
-
-@pytest.mark.parametrize("quality", ["low", "standard", "high"])
-def test_gpu_subprocess_pipeline(frame, quality):
-    h, w = frame.shape[:2]
-    before = shm_entries()
-    size = matting.gpu_input_size(w, h, quality)
-    gpu = matting.GpuMatter(*size, "CPUExecutionProvider", matting.GPU_MODELS[quality])
-    try:
-        deadline = time.monotonic() + 180
-        while not gpu.ready():
-            assert not gpu.status.startswith("error"), gpu.status
-            assert time.monotonic() < deadline, f"stuck in {gpu.status}"
-            time.sleep(0.2)
-        assert gpu.proc.is_alive()
-        for _ in range(4):
-            a = gpu.alpha(frame)
-            assert a is not None, gpu.status
-        assert a.shape == (h, w)
-        assert_good_matte(a)
-    finally:
-        gpu.close()
-    assert not gpu.proc.is_alive(), "GPU subprocess must exit with the stream"
-    assert shm_entries() == before, "shared memory leaked"
-
-
-def test_gpu_subprocess_reports_errors(frame):
-    """A provider that cannot load must surface as an error (the worker then stays on CPU)."""
-    h, w = frame.shape[:2]
-    gpu = matting.GpuMatter(w, h, "NoSuchExecutionProvider")
-    try:
-        deadline = time.monotonic() + 120
-        while not gpu.status.startswith("error"):
-            assert not gpu.ready(), "an unknown provider cannot become ready"
-            assert time.monotonic() < deadline, f"no error reported ({gpu.status})"
-            time.sleep(0.2)
-    finally:
-        gpu.close()
-    assert not gpu.proc.is_alive()
-
-
-def test_try_provider():
-    assert matting.try_provider("CPUExecutionProvider") is None
-    assert matting.try_provider("NoSuchExecutionProvider")
-
-
-@pytest.mark.parametrize("provider, onnx_installed, expected", [
-    (None, True, "unsupported"),                         # CPU-only onnxruntime
-    ("NoSuchExecutionProvider", True, "unsupported"),    # provider listed but not working
-    ("CPUExecutionProvider", False, "no_onnx"),          # works, python-onnx missing
-    ("CPUExecutionProvider", True, "ok"),
-])
-def test_detect_gpu(monkeypatch, provider, onnx_installed, expected):
-    monkeypatch.setattr(matting, "gpu_provider", lambda: provider)
-    monkeypatch.setattr(matting, "have_onnx", lambda: onnx_installed)
-    result = matting.detect_gpu()
-    assert result["state"] == expected
-    assert result["provider"] == (provider if expected in ("ok", "no_onnx") else None)

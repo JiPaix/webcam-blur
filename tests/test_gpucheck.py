@@ -1,11 +1,11 @@
 import sys
 import time
 
-from webcam_blur import gpucheck, matting
+from webcam_blur import gpucheck
 
 
 def test_startup_check_runs_in_a_subprocess():
-    """The tray-side check agrees with an in-process detection, without loading onnxruntime itself."""
+    """The tray-side check agrees with an in-process detection, without loading ncnn itself."""
     support = gpucheck.GpuSupport()
     assert support.state == "checking"
     done = []
@@ -14,14 +14,13 @@ def test_startup_check_runs_in_a_subprocess():
     while not done:
         assert time.monotonic() < deadline, "GPU check never finished"
         time.sleep(0.05)
-    expected = matting.detect_gpu()
-    assert (support.state, support.provider) == (expected["state"], expected["provider"])
+    assert support.state == gpucheck.detect_gpu()["state"], support.detail
 
 
 def test_tray_modules_stay_light():
     import subprocess
     code = ("import sys; import webcam_blur.app, webcam_blur.manager, webcam_blur.gpucheck; "
-            "print(','.join(m for m in ('cv2', 'onnxruntime', 'numpy', 'onnx') if m in sys.modules))")
+            "print(','.join(m for m in ('cv2', 'onnxruntime', 'numpy', 'webcam_blur.ncnn') if m in sys.modules))")
     from webcam_blur.proc import module_command
     _, env = module_command("app")
     env["QT_QPA_PLATFORM"] = "offscreen"

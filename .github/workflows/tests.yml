@@ -12,7 +12,7 @@ concurrency:
 env:
   # Robust Video Matting models, downloaded once and cached between runs.
   XDG_DATA_HOME: ${{ github.workspace }}/.cache/xdg-data
-  PIP_DEPS: numpy opencv-python-headless onnxruntime onnx pyudev PyQt6 pytest
+  PIP_DEPS: numpy opencv-python-headless onnxruntime pyudev PyQt6 pytest
 
 jobs:
   lint:
@@ -94,7 +94,8 @@ jobs:
       - name: Tools and dependencies
         run: |
           pacman -Syu --noconfirm --needed git namcap python-build python-installer python-setuptools python-wheel \
-            python-numpy python-opencv python-onnxruntime-cpu python-pyqt6 python-pyudev python-onnx python-pytest
+            python-numpy python-opencv python-onnxruntime-cpu python-pyqt6 python-pyudev python-pytest \
+            ncnn vulkan-swrast  # ncnn's GPU path on lavapipe, Vulkan in software: no GPU on the runners
       - uses: actions/checkout@v4
       - name: Build the package from this commit
         run: |
@@ -113,5 +114,7 @@ jobs:
         run: |
           test -f /usr/lib/udev/rules.d/60-webcam-blur.rules
           test -f /usr/share/webcam-blur/models/rvm_resnet50_fp32.onnx
+          test -f /usr/share/webcam-blur/models/rvm_resnet50.ncnn.bin
           command -v webcam-blur
-          WEBCAM_BLUR_TEST_INSTALLED=1 QT_QPA_PLATFORM=offscreen python -m pytest -m "not v4l2" -v
+          WEBCAM_BLUR_TEST_INSTALLED=1 WEBCAM_BLUR_SOFTWARE_VULKAN=1 QT_QPA_PLATFORM=offscreen \
+            python -m pytest -m "not v4l2" -v

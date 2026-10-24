@@ -3,7 +3,8 @@
 import os
 import time
 
-KFD_PROCS = "/sys/class/kfd/kfd/proc"  # AMD ROCm: per-process VRAM
+# GPU memory per process, from the DRM driver's fdinfo (amdgpu, i915/xe, nouveau…), in KiB.
+VRAM_KEYS = ("drm-memory-vram:", "drm-total-vram", "drm-total-local")
 CLOCK_TICKS = os.sysconf("SC_CLK_TCK")
 
 
@@ -44,19 +45,28 @@ def _pss(pid):
 
 
 
-def _vram(pid):
-    """VRAM in bytes for ``pid``, or None if the driver does not report it."""
-    folder = f"{KFD_PROCS}/{pid}"
-    if not os.path.isdir(folder):
+def _vram(pid, seen):
+    """VRAM in bytes used by ``pid``'s GPU clients, or None if it has none the driver reports.
+    ``seen``: DRM client ids already counted (a client can be open in several fds)."""
+    total = None
+    try:
+        fds = os.listdir(f"/proc/{pid}/fdinfo")
+    except OSError:
         return None
-    total = 0
-    for name in os.listdir(folder):
-        if name.startswith("vram_"):
-            try:
-                with open(f"{folder}/{name}") as f:
-                    total += int(f.read())
-            except (OSError, ValueError):
-                pass
+    for fd in fds:
+        try:
+            with open(f"/proc/{pid}/fdinfo/{fd}") as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue  # closed meanwhile
+        client = next((line.split(":", 1)[1].strip() for line in lines if line.startswith("drm-client-id:")), None)
+        if client is None or client in seen:
+            continue
+        seen.add(client)
+        for line in lines:
+            if line.startswith(VRAM_KEYS):
+                value = line.split(":", 1)[1].split()
+                total = (total or 0) + int(value[0]) * (1024 if value[1:] == ["KiB"] else 1)
     return total
 
 
@@ -70,20 +80,20 @@ class ResourceMeter:
 
     def sample(self):
         now = time.monotonic()
-        ticks, ram, vram, vram_known = {}, 0, 0, os.path.isdir(KFD_PROCS)
+        ticks, ram, vram, seen = {}, 0, None, set()
         for pid in our_pids():
             try:
                 ticks[pid] = _cpu_ticks(pid)
                 ram += _pss(pid)
             except OSError:  # exited meanwhile
                 continue
-            used = _vram(pid)
-            if used:
-                vram += used
+            used = _vram(pid, seen)
+            if used is not None:
+                vram = (vram or 0) + used
         cpu = 0.0
         if self.when is not None and now > self.when:
             # Processes that started since the last sample count from zero.
             delta = sum(t - self.ticks.get(pid, 0) for pid, t in ticks.items())
             cpu = max(0.0, delta / CLOCK_TICKS / (now - self.when) / self.cpus * 100)
         self.ticks, self.when = ticks, now
-        return {"cpu": cpu, "ram": ram, "vram": vram if vram_known else None}
+        return {"cpu": cpu, "ram": ram, "vram": vram}  # vram: None while nothing uses the GPU

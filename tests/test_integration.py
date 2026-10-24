@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from conftest import FRAME, PERSON, TEXTURED, detail, mean_abs_diff
 
-from webcam_blur import cameras, gpucheck, v4l2
+from webcam_blur import cameras, gpucheck, ncnn, v4l2
 from webcam_blur.cameras import Camera
 from webcam_blur.config import DEFAULTS, Config
 from webcam_blur.resources import our_pids
@@ -293,18 +293,17 @@ def test_resolution_choice(pipeline, tmp_path):
     assert wait_for(lambda: worker.mode == auto, IDLE_GRACE + 5)
 
 
+@pytest.mark.skipif(ncnn.library() is None, reason="ncnn is not installed")
 def test_gpu_path_in_live_pipeline(pipeline, tmp_path, monkeypatch):
-    """The GPU subprocess (here on onnxruntime's CPU provider) takes over, then goes away."""
+    """The GPU model (ncnn: Vulkan, or its CPU backend without a GPU) takes over, then goes away."""
     monkeypatch.setattr(gpucheck.gpu_support, "state", "ok")
-    monkeypatch.setattr(gpucheck.gpu_support, "provider", "CPUExecutionProvider")
     pipeline.config.data["use_gpu"] = True
     worker = worker_of(pipeline)
     out_path = tmp_path / "gpu.npy"
-    shm_before = {f for f in os.listdir("/dev/shm") if f.startswith("psm_")}  # e.g. a real stream's
     try:
         proc = start_consumer(worker.output_path, 60, out_path)
         assert wait_for(lambda: worker.engine == "gpu", 40, 0.25), f"engine stayed {worker.engine!r}"
-        # Switching quality mid-stream restarts the GPU subprocess with the other model.
+        # Switching quality mid-stream reloads the GPU model.
         pipeline.config.data["quality"] = "high"
         assert wait_for(lambda: worker.engine != "gpu", 5, 0.1), "quality change should restart the GPU model"
         assert wait_for(lambda: worker.engine == "gpu", 45, 0.25), f"engine stayed {worker.engine!r}"
@@ -312,13 +311,12 @@ def test_gpu_path_in_live_pipeline(pipeline, tmp_path, monkeypatch):
     finally:
         pipeline.config.data["use_gpu"] = False
         pipeline.config.data["quality"] = DEFAULTS["quality"]
-    print(f"\nconsumer stats (GPU path on CPU provider): {stats}")
+    print(f"\nconsumer stats (GPU path): {stats}")
     for name in TEXTURED:
         assert detail(out, name) < 0.3 * detail(FRAME, name), f"{name} should be blurred"
     assert wait_for(lambda: not worker.in_use, IDLE_GRACE + 5)
     assert worker.proc is None, "stream subprocess still running after the stream"
     assert not [p for p in our_pids() if "webcam_blur.stream" in cmdline(p)]
-    assert {f for f in os.listdir("/dev/shm") if f.startswith("psm_")} <= shm_before, "shared memory leaked"
 
 
 def test_unplug_and_replug(pipeline):

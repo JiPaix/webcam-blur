@@ -9,7 +9,9 @@ description = "Background blur for any webcam, as virtual cameras usable in ever
 readme = "README.md"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.11"
-dependencies = ["numpy", "onnx", "onnxruntime", "opencv-python", "PyQt6", "pyudev"]
+dependencies = ["numpy", "onnxruntime", "opencv-python", "PyQt6", "pyudev"]
+# GPU acceleration: the ncnn library (with Vulkan), loaded with ctypes. Not on PyPI as such:
+# install it from your distribution (Arch: ncnn).
 
 [project.scripts]
 webcam-blur = "webcam_blur.app:main"
@@ -21,7 +23,7 @@ Homepage = "https://github.com/JiPaix/webcam-blur"
 packages = ["webcam_blur"]
 
 [tool.setuptools.package-data]
-webcam_blur = ["locales/*.json"]
+webcam_blur = ["locales/*.json", "data/*.jpg"]
 
 [tool.setuptools.dynamic]
 version = { attr = "webcam_blur.__version__" }

@@ -6,7 +6,7 @@ from webcam_blur.config import CAMERA_DEFAULTS, DEFAULTS, Config
 def test_defaults(tmp_path):
     cfg = Config(tmp_path / "config.json")
     assert cfg["strength"] == DEFAULTS["strength"]
-    assert cfg["use_gpu"] is True
+    assert cfg["use_gpu"] is False
     assert cfg.camera("cam") == CAMERA_DEFAULTS
 
 
@@ -56,6 +56,7 @@ def test_migrates_capture_mode_overrides(tmp_path):
 def test_quality(tmp_path):
     path = tmp_path / "config.json"
     assert Config(path)["quality"] == "low"
+    assert Config(path)["use_gpu"] is False, "default: Low on the CPU"
     path.write_text(json.dumps({"quality": "ultra"}))
     assert Config(path)["quality"] == "low"
     path.write_text(json.dumps({"quality": "standard"}))  # 0.1.x users keep their choice

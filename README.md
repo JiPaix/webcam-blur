@@ -24,9 +24,10 @@ Meet, Discord, OBS, Firefox, Chrome… Turn it on and off with one click in the 
   as sliders, remembered and set again whenever the webcam is plugged in.
 - **Stays out of the way.** Until an app actually uses a camera, it needs about 40 MB of
   memory and next to no processor time, and the webcam stays off.
-- **Light by default.** About half a processor core at 720p and 30 fps. A graphics card
-  (AMD or NVIDIA) is optional: it unlocks the *High* quality and takes the load off the
-  processor at higher resolutions and frame rates.
+- **Light by default.** About half a processor core and 210 MB of memory at 720p and
+  30 fps. A graphics card is optional (AMD, NVIDIA or Intel, through Vulkan): for about
+  50 MB more memory, it takes the load off the processor at higher qualities,
+  resolutions and frame rates.
 - **Private.** Everything happens on your computer. No account, no cloud, nothing sent
   anywhere.
 - **In your language.** English and French so far. [Adding a language](CONTRIBUTING.md)
@@ -49,9 +50,10 @@ menu.
 - **Blur strength:** light, medium or strong (see the pictures above).
 - **Quality:** how finely the AI model looks at you. *Low*, the default, is the
   lightest, and its edges differ very little from *Standard*. *High* gives slightly
-  finer edges around hair and needs a graphics card. All the numbers are in
-  [Memory and speed](#memory-and-speed).
-- **Use GPU:** shown only if your graphics card passed a quick test at startup.
+  finer edges around hair; it is much heavier, best with a graphics card. All the
+  numbers are in [Memory and speed](#memory-and-speed).
+- **Use GPU:** off by default. Shown only if your graphics card passed a quick test at
+  startup. It saves the most processor time with *Standard* and *High*, or at 60 fps.
 - **Start at login.**
 - A greyed-out line shows the processor, memory and graphics memory the app uses right now.
 
@@ -97,27 +99,23 @@ Slack, Skype, OBS, Jitsi… If your app lists cameras, the "(blur)" ones are the
 
 **Will it slow down my computer?**
 Only while an app uses a camera. With the default settings (720p at 30 fps, *Low*
-quality), blurring takes about half a processor core on the test machine (Ryzen 7
-9800X3D, Radeon RX 9070), and 210 MB of memory without the graphics card or 950 MB with
-it. When no app uses a camera, it needs about 40 MB and next to no processor time. See
+quality, on the processor), blurring takes about half a processor core and 210 MB of
+memory on the test machine (Ryzen 7 9800X3D, Radeon RX 9070). When no app uses a
+camera, it needs about 40 MB and next to no processor time. See
 [Memory and speed](#memory-and-speed) for every setting.
 
 **My computer is short on memory or power.**
-Keep *Low* quality and untick *Use GPU*. The graphics card saves a little processor
-time, but its drivers alone take several hundred MB of memory.
+Keep *Low* quality. If *Use GPU* is offered, ticking it saves processor time for about
+50 MB more memory. If the processor can't keep up (with *High*, for example), the video
+keeps its frame rate and the cut-out simply updates less often.
 
 **The "Use GPU" option is missing.**
-Your graphics card didn't pass the startup test, or onnxruntime was installed without
-GPU support. Blurring still works, on the processor. The reason is in the log:
-`journalctl --user -t webcam-blur`. On Arch, install `python-onnxruntime-rocm` (AMD) or
-`python-onnxruntime-cuda` (NVIDIA).
-
-**My processor gets busy for a few minutes after installing.**
-That's normal on AMD. The AI model is compiled for your graphics card, once for each
-webcam resolution and quality (1–2 minutes each, again after a graphics driver update
-or when you pick a new resolution). It runs at the lowest priority, so everything else,
-calls included, comes first. If a call starts before it's done, the processor does the
-blurring meanwhile.
+The GPU runs the model through Vulkan with [ncnn](https://github.com/Tencent/ncnn): on
+Arch, `sudo pacman -S ncnn`, then restart Webcam Blur. It works with the usual Vulkan
+drivers (`vulkan-radeon` for AMD, `vulkan-intel` for Intel, the NVIDIA driver). At
+startup, a quick test runs the model on the GPU and on the processor: the option only
+appears if the GPU gives the same result, faster. Blurring still works without it, on
+the processor. The reason is in the log: `journalctl --user -t webcam-blur`.
 
 **I chose 60 fps but my app gets 30.**
 Many webcams lower their frame rate in dim light to expose each picture longer. On
@@ -158,18 +156,17 @@ cd webcam-blur
 makepkg -si
 ```
 
-pacman asks which onnxruntime build to install: `python-onnxruntime-rocm` for an AMD
-graphics card, `python-onnxruntime-cuda` for NVIDIA, otherwise `python-onnxruntime-cpu`.
-You can switch later, e.g. `sudo pacman -S python-onnxruntime-rocm`.
+For GPU acceleration (optional), also install `ncnn`. If pacman asks which onnxruntime
+build to install, pick `python-onnxruntime-cpu`: the GPU doesn't go through onnxruntime.
 
 The `v4l2loopback` kernel module (**version 0.13 or newer**) ships with some kernels,
 such as CachyOS. For other kernels, install `v4l2loopback-dkms`.
 
 ### Other distributions / from source
 
-Requirements: Python ≥ 3.11, PyQt6, OpenCV, NumPy, pyudev, onnx, onnxruntime (a GPU
-build such as `onnxruntime-gpu` for NVIDIA, or ROCm/MIGraphX for AMD), and the
-v4l2loopback module (≥ 0.13). Ubuntu 24.04 only packages v4l2loopback 0.12, which
+Requirements: Python ≥ 3.11, PyQt6, OpenCV, NumPy, pyudev, onnxruntime, and the
+v4l2loopback module (≥ 0.13). For the GPU: the ncnn library (`libncnn.so.1`, built with
+Vulkan) and a Vulkan driver. Ubuntu 24.04 only packages v4l2loopback 0.12, which
 cannot create virtual cameras at runtime: build a newer one from source there.
 
 1. Install the system files (as root):
@@ -204,7 +201,7 @@ cannot create virtual cameras at runtime: build a newer one from source there.
               ┌──────────── stream process (only while an app reads) ────────────┐
  webcam ────▶ │ capture → person matting (RVM) → blurred background → writes     │ ──▶ the app
               │ through the virtual camera's file descriptor handed over by the  │
-              │ tray; GPU inference in its own subprocess                        │
+              │ tray; the model runs on the CPU or on the GPU (Vulkan)           │
               └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -219,8 +216,9 @@ cannot create virtual cameras at runtime: build a newer one from source there.
   already-configured file descriptor, because the format can't change under a reading
   app. Settings changes go to the stream process over stdin, and it reports its state
   on stdout. It exits a few seconds after the app closes the camera.
-- **People are cut out** with [Robust Video Matting](https://github.com/PeterL1n/RobustVideoMatting)
-  (ONNX Runtime). The background is blurred with a background-weighted Gaussian, so the
+- **People are cut out** with [Robust Video Matting](https://github.com/PeterL1n/RobustVideoMatting):
+  ONNX Runtime on the processor, [ncnn](https://github.com/Tencent/ncnn) with Vulkan on the
+  graphics card. The background is blurred with a background-weighted Gaussian, so the
   person doesn't bleed into the blur.
 - **Quality** sets the model and the size of the frame it sees. The cut-out is then
   scaled back to the webcam's resolution:
@@ -229,40 +227,46 @@ cannot create virtual cameras at runtime: build a newer one from source there.
   | --- | --- | --- |
   | *Low* | MobileNetV3, 320 px wide | MobileNetV3, 640 px wide |
   | *Standard* | MobileNetV3, 640 px wide | MobileNetV3, full resolution |
-  | *High* | as *Standard* | ResNet50, full resolution |
+  | *High* | ResNet50, 640 px wide | ResNet50, full resolution |
 
   Above 30 fps, *Low* runs the model on every other frame and reuses the cut-out in
-  between. On the graphics card, models run in half precision on MIGraphX. GPU
-  execution providers need fixed input sizes, so the model is converted once per size
-  (`~/.cache/webcam-blur/`) and MIGraphX also compiles it once per size.
-- **Models are prepared ahead of time,** for each webcam's resolution in every quality,
-  in a separate process at the lowest CPU priority. The tray starts it when the GPU check
-  passes and whenever a resolution or the set of webcams changes. A stream that needs a
-  size nobody prepared yet runs it the same way. Each compiled model is stamped with the
-  onnxruntime and ROCm versions, so an update triggers a recompile.
-- **The GPU check** runs a tiny model on the GPU in a throwaway process at startup. A
-  provider that silently falls back to the processor counts as a failure.
+  between. Whatever the quality, when the model takes longer than a frame lasts (the
+  stream measures how busy it is every second), it runs on every second, third…
+  frame instead, so the video keeps the webcam's frame rate.
+- **On the graphics card,** the models run in half precision on ncnn's Vulkan backend,
+  called from Python through ncnn's C API. They are converted once from RVM's ONNX files
+  by [`tools/convert_ncnn.py`](tools/convert_ncnn.py) and published as a
+  [release](https://github.com/JiPaix/webcam-blur/releases/tag/ncnn-models-1). The
+  weights work at any size: the network description is generated for each webcam
+  resolution from a 640×360 template, in a fraction of a second, with nothing to compile.
+  The model loads in the background while the processor covers the first frames.
+- **The GPU check** runs the model on a portrait at startup, in a throwaway process, on
+  the GPU and on the processor. The GPU must give the same cut-out (a driver bug would
+  show as wrong edges: one in ncnn's Vulkan code is already worked around in the
+  conversion) and be faster (a software Vulkan driver is not).
 
 ### Memory and speed
 
-Measured on a Ryzen 7 9800X3D with a Radeon RX 9070 (ROCm 7), with a 1280×720 webcam.
-Every setting delivers the webcam's full frame rate. Memory is the PSS of all the app's
-processes, in the same units as the tray menu:
+Measured on a Ryzen 7 9800X3D with a Radeon RX 9070 XT (Vulkan, RADV), with a 1280×720
+webcam. Every setting delivers the webcam's full frame rate. Memory is the PSS of all the
+app's processes, in the same units as the tray menu:
 
 | | Processor, 30 fps | Processor, 60 fps | Memory | Graphics memory |
 | --- | --- | --- | --- | --- |
 | No app using a camera | 0.02 cores | 0.02 cores | 40 MB | — |
-| Processor only, *Low* (default) | 0.6 cores | 0.8 cores | 210 MB | — |
-| Processor only, *Standard* | 1.3 cores | 2.5 cores | 260 MB | — |
-| GPU, *Low* (default) | 0.5 cores | 0.7 cores | 950 MB | 460 MB |
-| GPU, *Standard* | 0.5 cores | 0.9 cores | 1.05 GB | 650 MB |
-| GPU, *High* | 0.5 cores | 0.9 cores | 1.3 GB | 710 MB |
+| Processor only, *Low* (default) | 0.6 cores | 0.9 cores | 210 MB | — |
+| Processor only, *Standard* | 1.3 cores | 1.6 cores | 250 MB | — |
+| Processor only, *High* | 1.8 cores | 2.4 cores¹ | 480 MB | — |
+| GPU, *Low* | 0.6 cores | 0.8 cores | 260 MB | 60 MB |
+| GPU, *Standard* | 0.6 cores | 1.1 cores | 280 MB | 80 MB |
+| GPU, *High* | 0.6 cores | 1.1 cores | 320 MB | 200 MB |
 
-ROCm and MIGraphX alone take about 300 MB of memory for their libraries as soon as
-anything runs on an AMD GPU, plus the compiled model kept in memory. That is why the
-processor path uses much less memory. With the GPU, the processor still decodes the
-webcam's video, composes the blur and converts formats. Compiling a model for a new
-resolution temporarily uses more memory, outside calls.
+¹ The model runs on every third frame there: on this processor, ResNet50 takes longer
+than a 60 fps frame lasts.
+
+With the GPU, the processor still decodes the webcam's video, composes the blur and
+converts formats: that is most of what remains. At 30 fps, *Low* costs about the same
+either way; the GPU makes the difference at higher qualities and frame rates.
 
 ### Configuration file
 
@@ -272,8 +276,8 @@ Everything is in the tray menu and the settings window. Settings are stored in
 | Key | Meaning |
 | --- | --- |
 | `strength` | `light`, `medium` or `strong` |
-| `use_gpu` | `true` / `false` |
-| `quality` | `low` (default), `standard` or `high` (`high` needs the GPU) |
+| `use_gpu` | `true` / `false` (default) |
+| `quality` | `low` (default), `standard` or `high` |
 | `language` | e.g. `"fr"`; `null` follows the system locale |
 | `cameras.<id>.blur` | blur on/off for this camera |
 | `cameras.<id>.mode` | resolution chosen in the settings (`{"width", "height", "fps"}`), `null` = automatic |
@@ -287,8 +291,8 @@ Everything is in the tray menu and the settings window. Settings are stored in
   passed on to the real webcam.
 - **OBS's own virtual camera** expects to load v4l2loopback with its own options. With
   `devices=0`, it may need its module options adjusted.
-- **Tested hardware:** only AMD (RX 9070, MIGraphX) and processors so far. NVIDIA/CUDA
-  reports are welcome.
+- **Tested hardware:** only AMD (RX 9070 XT, RADV) and processors so far. Reports from
+  NVIDIA and Intel GPUs are welcome; the startup check keeps the GPU off if it misbehaves.
 
 ### Development
 

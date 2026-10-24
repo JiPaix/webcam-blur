@@ -36,15 +36,17 @@ the suffix.
 - `webcam_blur/worker.py`: one thread per webcam: keeps its virtual camera ready and
   starts the stream process while an app reads it.
 - `webcam_blur/stream.py`: the stream process (capture → matting → blur → virtual camera).
-- `webcam_blur/matting.py`: RVM models (CPU, and the GPU subprocess).
-- `webcam_blur/prepare.py`: freezes and compiles GPU models ahead of time, at low priority.
-- `webcam_blur/models.py`: model files and the model per quality.
-- `webcam_blur/gpucheck.py`: the startup GPU check, in a throwaway process.
+- `webcam_blur/matting.py`: RVM on the CPU (onnxruntime).
+- `webcam_blur/ncnn.py`: RVM on the GPU (ncnn with Vulkan, through its C API with ctypes).
+- `webcam_blur/models.py`: model files, their downloads, and the model per quality.
+- `webcam_blur/gpucheck.py`: the startup GPU check (Vulkan result and speed against the
+  CPU), in a throwaway process.
+- `tools/convert_ncnn.py`: converts RVM's ONNX models for ncnn (see below).
 - `webcam_blur/resources.py`: the resource line of the menu.
 - `webcam_blur/v4l2.py`: kernel interfaces (v4l2loopback control, output, webcam modes).
 - `webcam_blur/cameras.py`: webcam detection and hotplug (udev).
 
-The tray process must stay light: it never imports OpenCV, onnxruntime, NumPy or onnx
+The tray process must stay light: it never imports OpenCV, onnxruntime, NumPy or ncnn
 (a test checks it). Anything that needs them runs in a subprocess.
 
 Run from a checkout with `python -m webcam_blur` (see the README for the system files).
@@ -76,3 +78,19 @@ The [release workflow](.github/workflows/release.yml) then:
 
 It needs the repository secret `AUR_SSH_PRIVATE_KEY`: a private SSH key whose public
 half is registered on the maintainer's AUR account.
+
+### GPU models
+
+The GPU path runs RVM converted for ncnn. The converted files are published once, as
+assets of a GitHub release of their own (`ncnn-models-N`), and downloaded from there by
+the package and by `models.ensure_models()`. To produce a new set (new RVM models, a new
+pnnx or a conversion fix):
+
+1. `pip install pnnx onnx` (plus the app's dependencies and ncnn), then
+   `python tools/convert_ncnn.py dist/ncnn-models`. It checks each converted model
+   against onnxruntime (on the CPU, and on Vulkan if there is a GPU) and prints the
+   checksums.
+2. Publish them: `gh release create ncnn-models-N dist/ncnn-models/*` (a tag that does not
+   start with `v`, so the release workflow does not run).
+3. Update `NCNN_URL` and the checksums in `webcam_blur/models.py`, and `_ncnn` and the
+   checksums in `packaging/arch/PKGBUILD`.

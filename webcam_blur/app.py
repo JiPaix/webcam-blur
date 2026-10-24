@@ -18,7 +18,6 @@ from . import gpucheck, i18n, models
 from .config import QUALITIES, STRENGTHS, Config
 from .i18n import number, tr
 from .manager import Manager
-from .prepare import Precompiler, jobs_for
 from .resources import ResourceMeter
 from .settings import SettingsWindow
 
@@ -89,7 +88,6 @@ class Tray:
         self.resources = None
         self.resource_timer = QTimer(interval=2000, timeout=self.update_resources)
         self.resource_timer.start()
-        self.precompiler = Precompiler()
         self.refresh()
         self.tray.show()
         if manager.error:
@@ -118,8 +116,6 @@ class Tray:
         sub = m.addMenu(tr("menu.quality"))
         group = QActionGroup(sub)
         for key in QUALITIES:
-            if key == "high" and not gpu_ok:
-                continue  # far too slow on a processor
             act = QAction(tr(f"quality.{key}"), sub, checkable=True)
             act.setChecked(self.config["quality"] == key)
             act.triggered.connect(lambda _=False, k=key: self.config.__setitem__("quality", k))
@@ -130,8 +126,8 @@ class Tray:
             act.setCheckable(True)
             act.setChecked(self.config["use_gpu"])
             act.toggled.connect(lambda on: self.config.__setitem__("use_gpu", on))
-        elif gpucheck.gpu_support.state == "no_onnx":
-            m.addAction(tr("menu.use_gpu_needs_onnx")).setEnabled(False)
+        elif gpucheck.gpu_support.state == "no_ncnn":
+            m.addAction(tr("menu.use_gpu_needs_ncnn")).setEnabled(False)
 
         m.addSeparator()
         act = m.addAction(tr("menu.autostart"))
@@ -180,16 +176,6 @@ class Tray:
         self.tray.setToolTip(tr("app.tooltip_title") + "\n" + "\n".join(lines))
         if self.settings is not None and self.settings.isVisible():
             self.settings.refresh()
-        self.prepare_models()
-
-    def prepare_models(self):
-        """Compile GPU models ahead of time for each webcam's resolution, so that the GPU is
-        ready when an app opens a camera, whatever the quality (see prepare.py)."""
-        support = gpucheck.gpu_support
-        if support.state == "ok" and self.config["use_gpu"]:
-            modes = [w.wanted_mode() for w in self.manager.workers.values() if w.modes]
-            self.precompiler.update(jobs_for(modes, self.config["quality"], support.provider))
-
 
     def update_resources(self, sample=True):
         if sample or self.usage is None:

@@ -35,7 +35,7 @@ class CameraWorker(threading.Thread):
         self.mode = None   # mode the virtual camera currently has
         self.proc = None   # stream subprocess, while an app reads the virtual camera
         self.in_use = False
-        self.engine = ""   # gpu | cpu | gpu_starting | gpu_preparing | gpu_compiling | gpu_error:… | no_gpu | no_onnx
+        self.engine = ""   # gpu | cpu | gpu_starting | gpu_error:… | no_gpu | no_ncnn
         self.error = None  # translation key or message
         self.stop_evt = threading.Event()
 
@@ -100,9 +100,9 @@ class CameraWorker(threading.Thread):
         if use_gpu or not self.config["use_gpu"] or support.state == "checking":
             reason = "cpu"
         else:
-            reason = "no_onnx" if support.state == "no_onnx" else "no_gpu"
+            reason = "no_ncnn" if support.state == "no_ncnn" else "no_gpu"
         return {"blur": self.settings["blur"], "sigma": STRENGTHS[self.config["strength"]],
-                "gpu_provider": support.provider if use_gpu else None,
+                "gpu": use_gpu,
                 "quality": self.config["quality"], "cpu_reason": reason}
 
     def stream(self, out, mode):
