@@ -1,0 +1,113 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Robust Video Matting models, downloaded once and cached between runs.
+  XDG_DATA_HOME: ${{ github.workspace }}/.cache/xdg-data
+  PIP_DEPS: numpy opencv-python-headless onnxruntime onnx pyudev PyQt6 pytest
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff
+      - run: ruff check .
+
+  unit:
+    name: unit (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+      - name: Qt runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - run: pip install $PIP_DEPS
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.XDG_DATA_HOME }}/webcam-blur/models
+          key: rvm-models-v1
+      - name: Tests (no kernel module needed)
+        run: python -m pytest -m "not v4l2" -v
+
+  integration:
+    name: integration (v4l2loopback ${{ matrix.v4l2loopback }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # 0.13 is the first version with /dev/v4l2loopback (older ioctl numbers).
+        v4l2loopback: ["v0.13.2", "v0.15.4"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Kernel headers and media modules
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential "linux-headers-$(uname -r)" "linux-modules-extra-$(uname -r)" \
+            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - name: Build and load v4l2loopback ${{ matrix.v4l2loopback }}
+        run: |
+          git clone --depth 1 --branch "${{ matrix.v4l2loopback }}" https://github.com/v4l2loopback/v4l2loopback.git /tmp/v4l2loopback
+          make -C /tmp/v4l2loopback
+          sudo modprobe videodev
+          sudo insmod /tmp/v4l2loopback/v4l2loopback.ko devices=0
+          ls -l /dev/v4l2loopback
+      - run: pip install $PIP_DEPS
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.XDG_DATA_HOME }}/webcam-blur/models
+          key: rvm-models-v1
+      - name: Download models
+        run: python -c "import sys; sys.path.insert(0, '.'); from webcam_blur import matting; matting.ensure_models()"
+      - name: End-to-end tests (as root, for the device nodes)
+        run: sudo -E env "PATH=$PATH" python -m pytest -m v4l2 -v -s
+        env:
+          WEBCAM_BLUR_TEST_MIN_FPS: "10"
+
+  arch-package:
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed git namcap python-build python-installer python-setuptools python-wheel
+      - uses: actions/checkout@v4
+      - name: Build the package from this commit
+        run: |
+          useradd -m builder
+          chown -R builder .
+          sudo -u builder git config --global --add safe.directory '*'
+          sudo -u builder .github/scripts/build-arch-package.sh build/arch
+      - name: namcap
+        run: |
+          namcap build/arch/PKGBUILD
+          namcap build/arch/*.pkg.tar.zst | tee namcap.txt
+          ! grep -E '^webcam-blur E:' namcap.txt
+      - name: Install with its dependencies
+        run: pacman -U --noconfirm build/arch/*.pkg.tar.zst && pacman -S --noconfirm --asdeps python-onnx python-pytest
+      - name: Test the installed package
+        run: |
+          test -f /usr/lib/udev/rules.d/60-webcam-blur.rules
+          test -f /usr/share/webcam-blur/models/rvm_resnet50_fp32.onnx
+          command -v webcam-blur
+          WEBCAM_BLUR_TEST_INSTALLED=1 QT_QPA_PLATFORM=offscreen python -m pytest -m "not v4l2" -v

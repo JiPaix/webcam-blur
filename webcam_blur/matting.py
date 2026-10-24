@@ -142,7 +142,7 @@ def frozen_model(width, height):
             graph.input.remove(inp)
             graph.initializer.append(numpy_helper.from_array(np.array([ratio], np.float32), inp.name))
         elif inp.name in shapes:
-            for dim, value in zip(inp.type.tensor_type.shape.dim, shapes[inp.name]):
+            for dim, value in zip(inp.type.tensor_type.shape.dim, shapes[inp.name], strict=True):
                 dim.Clear()
                 dim.dim_value = value
     for out in graph.output:
@@ -181,10 +181,20 @@ def _gpu_session(path, provider, conn):
     return sess
 
 
+def _attach(name):
+    """Attach to the parent's shared memory; the parent owns it and unlinks it."""
+    try:
+        return shared_memory.SharedMemory(name=name, track=False)  # Python 3.13+
+    except TypeError:
+        # Older Pythons: spawned children share the parent's resource tracker, so the
+        # duplicate registration is harmless (the tracker lives as long as the parent).
+        return shared_memory.SharedMemory(name=name)
+
+
 def gpu_process(conn, frame_name, alpha_name, width, height, provider):
     """GPU subprocess: reads frames from shared memory and writes the alpha back."""
-    shm_f = shared_memory.SharedMemory(name=frame_name, track=False)
-    shm_a = shared_memory.SharedMemory(name=alpha_name, track=False)
+    shm_f = _attach(frame_name)
+    shm_a = _attach(alpha_name)
     frame = np.ndarray((height, width, 3), np.uint8, shm_f.buf)
     alpha = np.ndarray((height, width), np.float32, shm_a.buf)
     try:

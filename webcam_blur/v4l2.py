@@ -15,11 +15,12 @@ def fourcc(s):
 
 
 # --- /dev/v4l2loopback ---------------------------------------------------------
-# struct v4l2_loopback_config (v4l2loopback.h, 0.12+): 72 bytes.
+# The control device exists since v4l2loopback 0.13. struct v4l2_loopback_config: 72 bytes.
 _LB_CONFIG = struct.Struct("<ii32sIIIIiiii")
-LOOPBACK_CTL_ADD = 0x40487E01     # _IOW('~', 1, struct v4l2_loopback_config)
-LOOPBACK_CTL_REMOVE = 0x40047E02  # _IOW('~', 2, __u32)
-LOOPBACK_CTL_QUERY = 0xC0487E03   # _IOWR('~', 3, struct v4l2_loopback_config)
+# (current, legacy) request numbers: 0.13 used plain constants, later versions _IOW/_IOWR.
+LOOPBACK_CTL_ADD = (0x40487E01, 0x4C80)     # _IOW('~', 1, struct v4l2_loopback_config)
+LOOPBACK_CTL_REMOVE = (0x40047E02, 0x4C81)  # _IOW('~', 2, __u32)
+LOOPBACK_CTL_QUERY = (0xC0487E03, 0x4C82)   # _IOWR('~', 3, struct v4l2_loopback_config)
 LABEL_MAX = 31  # card_label is char[32], NUL-terminated
 
 
@@ -37,18 +38,32 @@ class LoopbackControl:
 
     def __init__(self, path="/dev/v4l2loopback"):
         self.fd = os.open(path, os.O_RDWR)
+        self.legacy = None  # unknown until the first request
+
+    def _ioctl(self, request, arg):
+        current, legacy = request
+        if not self.legacy:
+            try:
+                result = fcntl.ioctl(self.fd, current, arg, True)
+                self.legacy = False
+                return result
+            except OSError as e:
+                if e.errno != errno.ENOTTY or self.legacy is False:
+                    raise
+                self.legacy = True
+        return fcntl.ioctl(self.fd, legacy, arg, True)
 
     def add(self, label):
         """Create a capture-exclusive loopback device, return its /dev/videoN number."""
         buf = bytearray(_LB_CONFIG.pack(-1, -1, label.encode()[:LABEL_MAX], 0, 0, 0, 0, 0, 0, 0, 0))
-        nr = fcntl.ioctl(self.fd, LOOPBACK_CTL_ADD, buf, True)
+        nr = self._ioctl(LOOPBACK_CTL_ADD, buf)
         _wait_node(f"/dev/video{nr}")
         return nr
 
     def remove(self, nr):
         """Remove a loopback device. Returns False if it is still open somewhere (EBUSY)."""
         try:
-            fcntl.ioctl(self.fd, LOOPBACK_CTL_REMOVE, nr)
+            self._ioctl(LOOPBACK_CTL_REMOVE, nr)
             return True
         except OSError as e:
             if e.errno == errno.EBUSY:
@@ -61,7 +76,7 @@ class LoopbackControl:
         """Label of loopback device ``nr``, or None if it is not a loopback device."""
         buf = bytearray(_LB_CONFIG.pack(nr, -1, b"", 0, 0, 0, 0, 0, 0, 0, 0))
         try:
-            fcntl.ioctl(self.fd, LOOPBACK_CTL_QUERY, buf, True)
+            self._ioctl(LOOPBACK_CTL_QUERY, buf)
         except OSError:
             return None
         return _LB_CONFIG.unpack(buf)[2].split(b"\0")[0].decode(errors="replace")
@@ -130,8 +145,9 @@ class LoopbackOutput:
         os.close(self.fd)
 
 
-def readers_of(path, own_pid=os.getpid()):
+def readers_of(path):
     """Number of processes (other than us) that have ``path`` open."""
+    own_pid = os.getpid()
     target = os.path.realpath(path)
     count = 0
     for pid in os.listdir("/proc"):
@@ -159,8 +175,12 @@ V4L2_BUF_TYPE_VIDEO_CAPTURE = 1
 V4L2_FRMSIZE_TYPE_DISCRETE = 1
 
 
-def capture_modes(path):
-    """{fourcc: [(w, h), …]} of discrete frame sizes, for MJPG and YUYV."""
+def capture_modes(path, wanted=(1280, 720)):
+    """{fourcc: [(w, h), …]} of frame sizes, for MJPG and YUYV.
+
+    Devices that report a size range (stepwise/continuous) get ``wanted`` if it fits,
+    plus their largest size.
+    """
     modes = {}
     fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
     try:
@@ -182,9 +202,16 @@ def capture_modes(path):
                 except OSError:
                     break
                 ftype, w, h = struct.unpack_from("<III", fbuf, 8)
-                if ftype != V4L2_FRMSIZE_TYPE_DISCRETE:
-                    break
-                sizes.append((w, h))
+                if ftype == V4L2_FRMSIZE_TYPE_DISCRETE:
+                    sizes.append((w, h))
+                    continue
+                min_w, max_w, step_w, min_h, max_h, step_h = struct.unpack_from("<6I", fbuf, 12)
+                ww, wh = wanted
+                if min_w <= ww <= max_w and min_h <= wh <= max_h \
+                        and (ww - min_w) % max(step_w, 1) == 0 and (wh - min_h) % max(step_h, 1) == 0:
+                    sizes.append(wanted)
+                sizes.append((max_w, max_h))
+                break
             modes[name] = sizes
     finally:
         os.close(fd)

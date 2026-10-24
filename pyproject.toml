@@ -28,3 +28,15 @@ webcam_blur = ["locales/*.json"]
 
 [tool.setuptools.dynamic]
 version = { attr = "webcam_blur.__version__" }
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "v4l2: needs the v4l2loopback module and access to /dev/v4l2loopback (run as root in CI)",
+]
