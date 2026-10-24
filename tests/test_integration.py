@@ -307,11 +307,16 @@ def test_gpu_path_in_live_pipeline(pipeline, tmp_path, monkeypatch):
     worker = worker_of(pipeline)
     out_path = tmp_path / "gpu.npy"
     try:
-        proc = start_consumer(worker.output_path, 45, out_path)
+        proc = start_consumer(worker.output_path, 60, out_path)
         assert wait_for(lambda: worker.engine == "gpu", 40, 0.25), f"engine stayed {worker.engine!r}"
+        # Switching quality mid-stream restarts the GPU subprocess with the other model.
+        pipeline.config.data["quality"] = "high"
+        assert wait_for(lambda: worker.engine != "gpu", 5, 0.1), "quality change should restart the GPU model"
+        assert wait_for(lambda: worker.engine == "gpu", 45, 0.25), f"engine stayed {worker.engine!r}"
         stats, out = finish_consumer(proc, out_path)
     finally:
         pipeline.config.data["use_gpu"] = False
+        pipeline.config.data["quality"] = "standard"
     print(f"\nconsumer stats (GPU path on CPU provider): {stats}")
     for name in TEXTURED:
         assert detail(out, name) < 0.3 * detail(FRAME, name), f"{name} should be blurred"

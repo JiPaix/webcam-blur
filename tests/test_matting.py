@@ -65,12 +65,14 @@ def test_blur_strengths_are_ordered(frame):
     assert values[0] > values[1] > values[2]
 
 
-def test_frozen_model_matches_original(frame):
+@pytest.mark.parametrize("quality", ["standard", "high"])
+def test_frozen_model_matches_original(frame, quality):
     """The static-shape model built for GPU providers computes the same thing."""
     h, w = frame.shape[:2]
-    path = matting.frozen_model(w, h)
+    model = matting.GPU_MODELS[quality]
+    path = matting.frozen_model(model, w, h)
     frozen = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
-    original = ort.InferenceSession(str(matting.model_path(matting.GPU_MODEL)), providers=["CPUExecutionProvider"])
+    original = ort.InferenceSession(str(matting.model_path(model)), providers=["CPUExecutionProvider"])
     shapes = {i.name: i.shape for i in frozen.get_inputs()}
     assert shapes["src"] == [1, 3, h, w]
     assert "downsample_ratio" not in shapes
@@ -90,10 +92,11 @@ def shm_entries():
     return {f for f in os.listdir("/dev/shm") if f.startswith("psm_")}
 
 
-def test_gpu_subprocess_pipeline(frame):
+@pytest.mark.parametrize("quality", ["standard", "high"])
+def test_gpu_subprocess_pipeline(frame, quality):
     h, w = frame.shape[:2]
     before = shm_entries()
-    gpu = matting.GpuMatter(w, h, "CPUExecutionProvider")
+    gpu = matting.GpuMatter(w, h, "CPUExecutionProvider", matting.GPU_MODELS[quality])
     try:
         deadline = time.monotonic() + 180
         while not gpu.ready():

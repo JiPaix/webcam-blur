@@ -15,7 +15,7 @@ from PyQt6.QtGui import QAction, QActionGroup, QColor, QIcon, QPainter, QPen, QP
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from . import gpucheck, i18n, models, v4l2
-from .config import STRENGTHS, Config
+from .config import QUALITIES, STRENGTHS, Config
 from .i18n import tr
 from .manager import Manager
 from .resources import ResourceMeter
@@ -120,6 +120,14 @@ class Tray:
             act.setCheckable(True)
             act.setChecked(self.config["use_gpu"])
             act.toggled.connect(lambda on: self.config.__setitem__("use_gpu", on))
+            sub = m.addMenu(tr("menu.quality"))
+            group = QActionGroup(sub)
+            for key in QUALITIES:
+                act = QAction(tr(f"quality.{key}"), sub, checkable=True)
+                act.setChecked(self.config["quality"] == key)
+                act.triggered.connect(lambda _=False, k=key: self.config.__setitem__("quality", k))
+                group.addAction(act)
+                sub.addAction(act)
         elif gpucheck.gpu_support.state == "no_onnx":
             m.addAction(tr("menu.use_gpu_needs_onnx")).setEnabled(False)
 

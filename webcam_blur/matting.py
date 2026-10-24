@@ -1,7 +1,8 @@
 """Person matting with Robust Video Matting (RVM), on CPU or in a GPU subprocess.
 
 - CPU: RVM mobilenetv3, frame downscaled to at most 640 px wide.
-- GPU: RVM resnet50 at full resolution. GPU execution providers such as MIGraphX
+- GPU: RVM at full resolution, mobilenetv3 ("standard" quality) or resnet50 ("high"),
+  in half precision on MIGraphX. GPU execution providers such as MIGraphX
   need static shapes, so the model is "frozen" once per camera resolution
   (constant downsample_ratio, fixed input sizes) and cached. Inference runs in a
   subprocess started for each stream and stopped afterwards, so nothing stays on
@@ -10,13 +11,14 @@
 
 import base64
 import multiprocessing as mp
+import shutil
 from multiprocessing import shared_memory
 
 import cv2
 import numpy as np
 import onnxruntime as ort
 
-from .models import CACHE, CPU_MODEL, GPU_MODEL, MODELS, model_path  # noqa: F401  (re-exported)
+from .models import CACHE, CPU_MODEL, GPU_MODELS, MODELS, model_path  # noqa: F401  (re-exported)
 
 # GPU execution providers, in order of preference.
 GPU_PROVIDERS = ("MIGraphXExecutionProvider", "CUDAExecutionProvider", "ROCMExecutionProvider")
@@ -109,15 +111,19 @@ class CpuMatter:
 
 # --- Static model for GPU providers -------------------------------------------
 
-def frozen_model(width, height):
-    """Path of the static-shape GPU model for this resolution, building it if needed."""
-    dest = CACHE / "models" / f"rvm_resnet50_{width}x{height}.onnx"
+def frozen_path(model, width, height):
+    return CACHE / "models" / f"{model.removesuffix('_fp32.onnx')}_{width}x{height}.onnx"
+
+
+def frozen_model(model, width, height):
+    """Path of the static-shape version of ``model`` for this resolution, building it if needed."""
+    dest = frozen_path(model, width, height)
     if dest.is_file():
         return dest
     import onnx
     from onnx import numpy_helper
 
-    src = str(model_path(GPU_MODEL))
+    src = str(model_path(model))
     ratio = downsample_ratio(width, height)
     # Run once on CPU to learn the recurrent state shapes at this resolution.
     probe = ort.InferenceSession(src, providers=["CPUExecutionProvider"])
@@ -157,13 +163,15 @@ def frozen_model(width, height):
 def _gpu_session(path, provider, conn):
     options = {}
     if provider == "MIGraphXExecutionProvider":
-        # One cache folder per model: compiled files of other resolutions are left alone.
-        cache = CACHE / "migraphx" / path.stem
+        # Half precision: same results here, less memory, faster. One cache folder per
+        # model and resolution: compiled files of the others are left alone.
+        cache = CACHE / "migraphx" / f"{path.stem}-fp16"
+        shutil.rmtree(CACHE / "migraphx" / path.stem, ignore_errors=True)  # 0.1.0's fp32 cache
         cache.mkdir(parents=True, exist_ok=True)
         before = set(cache.glob("*.mxr"))
         if not before:
             conn.send("compiling")
-        options = {"migraphx_model_cache_dir": str(cache)}
+        options = {"migraphx_model_cache_dir": str(cache), "migraphx_fp16_enable": "1"}
     sess = ort.InferenceSession(str(path), providers=[(provider, options)])
     if sess.get_providers()[0] != provider:
         raise RuntimeError(f"{provider} unavailable")
@@ -184,16 +192,16 @@ def _attach(name):
         return shared_memory.SharedMemory(name=name)
 
 
-def gpu_process(conn, frame_name, alpha_name, width, height, provider):
+def gpu_process(conn, frame_name, alpha_name, width, height, provider, model):
     """GPU subprocess: reads frames from shared memory and writes the alpha back."""
     shm_f = _attach(frame_name)
     shm_a = _attach(alpha_name)
     frame = np.ndarray((height, width, 3), np.uint8, shm_f.buf)
     alpha = np.ndarray((height, width), np.float32, shm_a.buf)
     try:
-        if not (CACHE / "models" / f"rvm_resnet50_{width}x{height}.onnx").is_file():
+        if not frozen_path(model, width, height).is_file():
             conn.send("preparing")
-        path = frozen_model(width, height)
+        path = frozen_model(model, width, height)
         sess = _gpu_session(path, provider, conn)
         shapes = {i.name: i.shape for i in sess.get_inputs()}
         rec = [np.zeros(shapes[f"r{k}i"], np.float32) for k in range(1, 5)]
@@ -226,8 +234,8 @@ class GpuMatter:
     ``status``: starting | preparing | compiling | ready | error:<message>
     """
 
-    def __init__(self, width, height, provider):
-        self.width, self.height = width, height
+    def __init__(self, width, height, provider, model=GPU_MODELS["standard"]):
+        self.width, self.height, self.model = width, height, model
         self.shm_f = shared_memory.SharedMemory(create=True, size=width * height * 3)
         self.shm_a = shared_memory.SharedMemory(create=True, size=width * height * 4)
         self.frame = np.ndarray((height, width, 3), np.uint8, self.shm_f.buf)
@@ -235,7 +243,7 @@ class GpuMatter:
         ctx = mp.get_context("spawn")
         self.conn, child = ctx.Pipe()
         self.proc = ctx.Process(target=gpu_process, daemon=True, args=(
-            child, self.shm_f.name, self.shm_a.name, width, height, provider))
+            child, self.shm_f.name, self.shm_a.name, width, height, provider, model))
         self.proc.start()
         child.close()
         self.status = "starting"

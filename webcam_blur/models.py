@@ -15,7 +15,9 @@ MODELS = {
     "rvm_resnet50_fp32.onnx": "25db300fcb6ee27f941a1b52c97856e8d1f13c7f35817f81a612f89af0e8a85c",
 }
 CPU_MODEL = "rvm_mobilenetv3_fp32.onnx"
-GPU_MODEL = "rvm_resnet50_fp32.onnx"
+# GPU model per quality setting. Both run in half precision on MIGraphX. "standard" needs
+# about 600 MB less memory during a call; "high" has slightly finer edges.
+GPU_MODELS = {"standard": "rvm_mobilenetv3_fp32.onnx", "high": "rvm_resnet50_fp32.onnx"}
 
 USER_DATA = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "webcam-blur"
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "webcam-blur"

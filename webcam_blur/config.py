@@ -7,10 +7,12 @@ from pathlib import Path
 PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "webcam-blur" / "config.json"
 
 STRENGTHS = {"light": 3.0, "medium": 6.0, "strong": 12.0}  # blur sigma, in quarter-resolution pixels
+QUALITIES = ("standard", "high")  # GPU model, see models.GPU_MODELS
 
 DEFAULTS = {
     "strength": "medium",
     "use_gpu": True,
+    "quality": "standard",
     "language": None,   # None = follow the system locale
     "cameras": {},      # per-camera settings, keyed by Camera.key
 }
@@ -28,7 +30,9 @@ def _migrate(data):
     old_strengths = {"leger": "light", "moyen": "medium", "fort": "strong"}
     if data.get("strength") in old_strengths:
         data["strength"] = old_strengths[data["strength"]]
-    for key in ("mode", "quality", "green"):
+    if data.get("quality") == "haute":  # pre-release French value
+        data["quality"] = "high"
+    for key in ("mode", "green"):
         data.pop(key, None)
     for cam in data.get("cameras", {}).values():  # 0.1.0: width/height/fps overrides
         if "width" in cam and "height" in cam:
@@ -46,6 +50,8 @@ class Config:
         self.data = {**DEFAULTS, **_migrate(data)}
         if self.data["strength"] not in STRENGTHS:
             self.data["strength"] = DEFAULTS["strength"]
+        if self.data["quality"] not in QUALITIES:
+            self.data["quality"] = DEFAULTS["quality"]
 
     def __getitem__(self, key):
         return self.data[key]

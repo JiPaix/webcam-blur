@@ -51,3 +51,12 @@ def test_migrates_capture_mode_overrides(tmp_path):
     cam = Config(path).camera("cam")
     assert cam["mode"] == {"width": 1920, "height": 1080, "fps": 60}
     assert "width" not in cam
+
+
+def test_quality(tmp_path):
+    path = tmp_path / "config.json"
+    assert Config(path)["quality"] == "standard"
+    path.write_text(json.dumps({"quality": "ultra"}))
+    assert Config(path)["quality"] == "standard"
+    path.write_text(json.dumps({"quality": "haute"}))  # pre-release French value
+    assert Config(path)["quality"] == "high"

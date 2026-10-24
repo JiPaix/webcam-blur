@@ -7,7 +7,8 @@ opened and configured and hands over (the format cannot change under a reading a
 
 Protocol, as JSON lines:
 - stdin, first line: {"camera": path, "fd": n, "mode": {width, height, fps, fourcc}, "settings": {…}}
-- stdin, then: updated settings {"blur", "sigma", "gpu_provider", "cpu_reason"}, or {"stop": true}
+- stdin, then: updated settings {"blur", "sigma", "gpu_provider", "gpu_model", "cpu_reason"},
+  or {"stop": true}
 - stdout: {"engine": …} whenever it changes, {"error": <translation key>} before failing
 """
 
@@ -61,12 +62,12 @@ def run(camera, out, mode, settings, stop):
             if now >= next_check:
                 next_check = now + 1.0
                 # The GPU subprocess starts in parallel; the CPU covers the first frames.
-                provider = settings.get("gpu_provider")
-                if provider and gpu is None:
-                    gpu = matting.GpuMatter(w, h, provider)
-                elif not provider and gpu is not None:
-                    gpu.close()
+                provider, model = settings.get("gpu_provider"), settings.get("gpu_model")
+                if gpu is not None and (not provider or gpu.model != model):
+                    gpu.close()  # GPU turned off, or quality changed
                     gpu = None
+                if provider and gpu is None:
+                    gpu = matting.GpuMatter(w, h, provider, model)
                 if gpu is None:
                     current = settings.get("cpu_reason", "cpu")
                 else:
