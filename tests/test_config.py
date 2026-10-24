@@ -62,3 +62,14 @@ def test_quality(tmp_path):
     assert Config(path)["quality"] == "standard"
     path.write_text(json.dumps({"quality": "haute"}))  # pre-release French value
     assert Config(path)["quality"] == "high"
+
+
+def test_cameras_do_not_share_their_image_settings(tmp_path):
+    config = Config(tmp_path / "config.json")
+    config.camera("a")["controls"]["gain"] = 100
+    assert config.camera("b")["controls"] == {}
+
+
+def test_configs_do_not_share_state(tmp_path):
+    Config(tmp_path / "a.json").camera("cam")["blur"] = False
+    assert Config(tmp_path / "b.json").camera("cam")["blur"] is True

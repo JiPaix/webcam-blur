@@ -19,7 +19,9 @@ Meet, Discord, OBS, Firefox, Chrome… Turn it on and off with one click in the 
 - **Plug and play.** New webcams are picked up as soon as you plug them in. Nothing to
   configure.
 - **One click.** Left-click the tray icon to switch the blur on or off for all your
-  webcams. Right-click for per-webcam settings.
+  webcams. Right-click for the settings.
+- **Your webcam's settings, kept.** Brightness, exposure, white balance, focus and zoom
+  as sliders, remembered and set again whenever the webcam is plugged in.
 - **Stays out of the way.** Until an app actually uses a camera, it needs about 40 MB of
   memory and next to no processor time, and the webcam stays off.
 - **Light by default.** About half a processor core at 720p and 30 fps. A graphics card
@@ -43,11 +45,7 @@ menu.
 
 ![The Webcam Blur tray menu](docs/images/tray-menu.png)
 
-- **One line per webcam** shows whether it's blurred and in use. It opens:
-  - **Blur:** on or off for that webcam.
-  - **Resolution:** every resolution and frame rate your webcam supports, read from the
-    webcam itself (e.g. 1080p · 30 fps or 720p · 60 fps). *Automatic* picks 720p at
-    30 fps, which is what video-call apps send anyway.
+- **Webcam settings…** opens the settings window (below).
 - **Blur strength:** light, medium or strong (see the pictures above).
 - **Quality:** how finely the AI model looks at you. *Low*, the default, is the
   lightest, and its edges differ very little from *Standard*. *High* gives slightly
@@ -56,6 +54,28 @@ menu.
 - **Use GPU:** shown only if your graphics card passed a quick test at startup.
 - **Start at login.**
 - A greyed-out line shows the processor, memory and graphics memory the app uses right now.
+
+## The settings window
+
+<img src="docs/images/settings.png" alt="The webcam settings window" width="420">
+
+One tab per webcam:
+
+- **Blur the background:** on or off for that webcam. The tab also shows whether an app
+  is using it.
+- **Resolution:** every resolution and frame rate your webcam supports, read from the
+  webcam itself (e.g. 1080p · 30 fps or 720p · 60 fps). *Automatic* picks 720p at
+  30 fps, which is what video-call apps send anyway.
+- **Image:** the webcam's own controls, as it lists them: brightness, contrast, gain,
+  white balance, exposure, anti-flicker, focus, zoom… Changes show straight away, even
+  during a call. Settings the webcam ignores in its current mode are greyed out, such as
+  the exposure time while exposure is automatic. Under the exposure time, a note says how
+  long it can be before the webcam has to lower its frame rate.
+- **Reset image settings** puts the webcam's defaults back.
+
+The image settings are stored in the webcam, so they also apply to the camera without
+blur. Webcams forget them when unplugged: Webcam Blur remembers the ones you changed and
+sets them again whenever the webcam is plugged in or the app starts.
 
 ## Getting started
 
@@ -101,19 +121,17 @@ blurring meanwhile.
 
 **I chose 60 fps but my app gets 30.**
 Many webcams lower their frame rate in dim light to expose each picture longer. On
-Logitech webcams this is the *Exposure, dynamic framerate* setting: turn it off with
-[cameractrls](https://github.com/soyersoyer/cameractrls), `guvcview`, or
-`v4l2-ctl -d /dev/video0 -c exposure_dynamic_framerate=0`. The picture gets darker
-instead.
+Logitech webcams this is *Lower the frame rate in dim light*, under *Exposure* in the
+settings window: untick it. The picture gets darker instead. More light on your face
+fixes both.
 
 **How do I change brightness, focus or zoom?**
-Those settings live in the webcam itself. Change them with a tool like
-[cameractrls](https://github.com/soyersoyer/cameractrls) or `guvcview`. The blurred
-camera shows the change straight away, even during a call.
+In *Webcam settings…*, under *Image*. The blurred camera shows the change straight
+away, even during a call.
 
 **Can my video app pick the resolution?**
-No. Choose it in Webcam Blur's menu instead, under the webcam's *Resolution*. A new
-resolution applies once no app is using the camera.
+No. Choose it in *Webcam settings…*, under *Resolution*. A new resolution applies once
+no app is using the camera.
 
 **Bits of my hair or my headphones get blurred.**
 The person is detected by an AI model. It struggles with things the same colour as
@@ -248,7 +266,7 @@ resolution temporarily uses more memory, outside calls.
 
 ### Configuration file
 
-Everything is in the tray menu. Settings are stored in
+Everything is in the tray menu and the settings window. Settings are stored in
 `~/.config/webcam-blur/config.json`:
 
 | Key | Meaning |
@@ -258,7 +276,8 @@ Everything is in the tray menu. Settings are stored in
 | `quality` | `low` (default), `standard` or `high` (`high` needs the GPU) |
 | `language` | e.g. `"fr"`; `null` follows the system locale |
 | `cameras.<id>.blur` | blur on/off for this camera |
-| `cameras.<id>.mode` | resolution chosen in the menu (`{"width", "height", "fps"}`), `null` = automatic |
+| `cameras.<id>.mode` | resolution chosen in the settings (`{"width", "height", "fps"}`), `null` = automatic |
+| `cameras.<id>.controls` | image settings changed in the settings window, e.g. `{"gain": 100}`, set again when the webcam is plugged in |
 | `cameras.<id>.virtual` | `false` to never create a virtual camera for this webcam |
 
 ### Limitations

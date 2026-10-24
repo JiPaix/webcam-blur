@@ -76,6 +76,14 @@ class Manager(QObject):
         if not modes:
             self.skipped.add(cam.key)  # e.g. infrared face-login cameras (greyscale only)
             return
+        saved = self.config.camera(cam.key)["controls"]
+        if saved:  # webcams forget their image settings when unplugged
+            try:
+                failed = v4l2.apply_controls(cam.path, saved)
+            except OSError:
+                failed = list(saved)
+            if failed:
+                print(f"[{cam.name}] cannot restore {', '.join(failed)}", file=sys.stderr, flush=True)
         try:
             nr = self.orphans.pop(cam.key, None)
             if nr is None:

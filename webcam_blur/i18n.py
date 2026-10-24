@@ -55,3 +55,8 @@ def setup(preferred=None):
 def tr(key, **kwargs):
     text = _strings.get(key) or _fallback.get(key) or key
     return text.format(**kwargs) if kwargs else text
+
+
+def number(value, decimals=0):
+    """``value`` with the language's decimal separator."""
+    return f"{value:.{decimals}f}".replace(".", tr("number.decimal"))

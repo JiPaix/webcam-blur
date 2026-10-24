@@ -121,12 +121,6 @@ class FakeWebcam:
         wait_for(lambda: self.control.remove(self.nr), 10, 0.5)
 
 
-@pytest.fixture(scope="module")
-def qt_app():
-    from PyQt6.QtCore import QCoreApplication
-    return QCoreApplication.instance() or QCoreApplication([])
-
-
 TEST_LABELS = (LABEL, "Second Cam (blur)", "webcam-blur test input", "webcam-blur probe",
                "webcam-blur hotplug probe")
 
@@ -336,6 +330,38 @@ def test_unplug_and_replug(pipeline):
     pipeline.manager.sync()
     assert pipeline.cam.key in pipeline.manager.workers
     assert LABEL in labels(pipeline.control)
+
+
+def test_image_controls_read_and_write(webcam):
+    controls = {c.key: c for c in v4l2.list_controls(webcam.path)}
+    assert controls["timeout"].type == v4l2.CTRL_INTEGER  # v4l2loopback's own controls
+    assert controls["keep_format"].type == v4l2.CTRL_BOOLEAN
+    try:
+        v4l2.set_control(webcam.path, controls["timeout"].id, 1234)
+        assert {c.key: c.value for c in v4l2.list_controls(webcam.path)}["timeout"] == 1234
+    finally:
+        v4l2.set_control(webcam.path, controls["timeout"].id, controls["timeout"].default)
+
+
+def test_saved_image_settings_are_restored_on_plug_in(pipeline, webcam):
+    """Webcams forget their settings when unplugged: they are set again when it comes back."""
+    controls = {c.key: c for c in v4l2.list_controls(webcam.path)}
+    saved = pipeline.config.camera(pipeline.cam.key)["controls"]
+    try:
+        saved.update({"timeout": 1500, "sustain_framerate": 1})
+        pipeline.state["present"] = False
+        pipeline.manager.sync()
+        for key in ("timeout", "sustain_framerate"):  # what a replugged webcam would report
+            v4l2.set_control(webcam.path, controls[key].id, controls[key].default)
+        pipeline.state["present"] = True
+        pipeline.manager.sync()
+        values = {c.key: c.value for c in v4l2.list_controls(webcam.path)}
+        assert values["timeout"] == 1500 and values["sustain_framerate"] == 1
+    finally:
+        saved.clear()
+        pipeline.state["present"] = True
+        for key in ("timeout", "sustain_framerate"):
+            v4l2.set_control(webcam.path, controls[key].id, controls[key].default)
 
 
 def test_virtual_camera_in_use_is_removed_once_released(pipeline, tmp_path):

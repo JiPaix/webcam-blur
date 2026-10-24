@@ -14,12 +14,13 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QAction, QActionGroup, QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import gpucheck, i18n, models, v4l2
+from . import gpucheck, i18n, models
 from .config import QUALITIES, STRENGTHS, Config
-from .i18n import tr
+from .i18n import number, tr
 from .manager import Manager
 from .prepare import Precompiler, jobs_for
 from .resources import ResourceMeter
+from .settings import SettingsWindow
 
 AUTOSTART = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "autostart" / "webcam-blur.desktop"
 
@@ -53,6 +54,22 @@ def engine_text(engine):
     return tr(f"engine.{engine}") if engine else "…"
 
 
+def camera_state(worker):
+    """("blur on" / "blur off", "idle" / "in use, GPU" / error) of one webcam."""
+    if worker.error:
+        status = tr("status.error", error=tr(worker.error))
+    elif worker.in_use:
+        status = tr("status.in_use", engine=engine_text(worker.engine))
+    else:
+        status = tr("status.idle")
+    return tr("tooltip.on" if worker.settings["blur"] else "tooltip.off"), status
+
+
+def camera_status(worker):
+    state, status = camera_state(worker)
+    return tr("settings.status", state=state, status=status)
+
+
 class Tray:
     def __init__(self, app, manager, config):
         self.app, self.manager, self.config = app, manager, config
@@ -63,7 +80,7 @@ class Tray:
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self.on_activated)
         self.layout = None
-        self.cameras = []
+        self.settings = None  # the settings window, created when first opened
         manager.changed.connect(self.refresh)
         self.timer = QTimer(interval=3000, timeout=self.refresh)
         self.timer.start()
@@ -82,27 +99,7 @@ class Tray:
         """(Re)build the menu; needed whenever the webcams or their mode lists change."""
         m = self.menu
         m.clear()
-        self.cameras = []  # (worker, submenu, blur action, {mode key or None: action}, pending note)
-        for key, worker in sorted(self.manager.workers.items(), key=lambda kv: kv[1].camera.name):
-            sub = m.addMenu(worker.camera.name)
-            blur = sub.addAction(tr("menu.blur"))
-            blur.setCheckable(True)
-            blur.toggled.connect(lambda on, k=key: self.set_camera(k, "blur", on))
-            res = sub.addMenu(tr("menu.resolution"))
-            group = QActionGroup(res)
-            choices = {}
-            for mode in [None] + v4l2.menu_modes(worker.modes):
-                act = res.addAction("")
-                act.setCheckable(True)
-                act.triggered.connect(lambda _=False, k=key, md=mode: self.set_camera(
-                    k, "mode", md.to_config() if md else None))
-                group.addAction(act)
-                choices[mode.key() if mode else None] = act
-                if mode is None:
-                    res.addSeparator()
-            pending = sub.addAction(tr("menu.resolution_pending"))
-            pending.setEnabled(False)
-            self.cameras.append((worker, sub, blur, choices, pending))
+        m.addAction(tr("menu.webcam_settings"), self.open_settings)
         if not self.manager.workers:
             m.addAction(self.manager.error or tr("menu.no_cameras")).setEnabled(False)
         m.addSeparator()
@@ -151,12 +148,20 @@ class Tray:
         self.config.save()
         self.refresh()
 
+    def open_settings(self):
+        if self.settings is None:
+            self.settings = SettingsWindow(self.manager, self.config, self.set_camera, camera_status)
+        self.settings.open()
+
     def on_activated(self, reason):
         # Left click: blur on/off for all cameras at once.
-        if reason == QSystemTrayIcon.ActivationReason.Trigger and self.cameras:
-            any_on = any(w.settings["blur"] for w, *_ in self.cameras)
-            for _w, _sub, blur, _choices, _pending in self.cameras:
-                blur.setChecked(not any_on)
+        workers = self.manager.workers
+        if reason == QSystemTrayIcon.ActivationReason.Trigger and workers:
+            any_on = any(w.settings["blur"] for w in workers.values())
+            for key in workers:
+                self.config.camera(key)["blur"] = not any_on
+            self.config.save()
+            self.refresh()
 
     def refresh(self):
         layout = (tuple((k, len(w.modes)) for k, w in sorted(self.manager.workers.items())),
@@ -164,35 +169,17 @@ class Tray:
         if layout != self.layout:
             self.layout = layout
             self.build_menu()
-        lines = []
-        for w, sub, blur, choices, pending in self.cameras:
-            on = w.settings["blur"]
-            if w.error:
-                status = tr("status.error", error=tr(w.error))
-            elif w.in_use:
-                status = tr("status.in_use", engine=engine_text(w.engine))
-            else:
-                status = tr("status.idle")
-            state = tr("tooltip.on" if on else "tooltip.off")
-            sub.setTitle(tr("menu.camera", name=w.camera.name, state=state, status=status))
-            blur.blockSignals(True)
-            blur.setChecked(on)
-            blur.blockSignals(False)
-            if w.modes:
-                chosen = v4l2.find_mode(w.modes, w.settings.get("mode"))
-                choices[None].setText(tr("menu.resolution_auto", mode=mode_text(v4l2.auto_mode(w.modes))))
-                for mode in v4l2.menu_modes(w.modes):
-                    choices[mode.key()].setText(mode_text(mode))
-                selected = choices.get(chosen.key()) if chosen else None
-                (selected or choices[None]).setChecked(True)
-            pending.setVisible(w.mode_pending)
-            lines.append(tr("tooltip.camera", name=w.camera.name, state=state, status=status))
+        workers = sorted(self.manager.workers.values(), key=lambda w: w.camera.name)
+        lines = [tr("tooltip.camera", name=w.camera.name, state=camera_state(w)[0], status=camera_state(w)[1])
+                 for w in workers]
         if not lines:
             lines.append(self.manager.error or tr("menu.no_cameras"))
-        any_on = any(w.settings["blur"] for w, *_ in self.cameras)
-        live = any(w.in_use for w, *_ in self.cameras)
+        any_on = any(w.settings["blur"] for w in workers)
+        live = any(w.in_use for w in workers)
         self.tray.setIcon(self.icons[(any_on, live)])
         self.tray.setToolTip(tr("app.tooltip_title") + "\n" + "\n".join(lines))
+        if self.settings is not None and self.settings.isVisible():
+            self.settings.refresh()
         self.prepare_models()
 
     def prepare_models(self):
@@ -211,10 +198,6 @@ class Tray:
             self.resources.setText(resources_text(self.usage))
 
 
-def number(value, decimals):
-    return f"{value:.{decimals}f}".replace(".", tr("number.decimal"))
-
-
 def size_text(n):
     if n >= 1e9:
         return tr("unit.gb", value=number(n / 1e9, 1))
@@ -226,10 +209,6 @@ def resources_text(usage):
     if usage["vram"] is None:
         return tr("menu.resources", cpu=cpu, ram=size_text(usage["ram"]))
     return tr("menu.resources_vram", cpu=cpu, ram=size_text(usage["ram"]), vram=size_text(usage["vram"]))
-
-
-def mode_text(mode):
-    return tr("mode.label", width=mode.width, height=mode.height, fps=f"{mode.fps:g}")
 
 
 def launch_command():

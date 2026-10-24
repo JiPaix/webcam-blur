@@ -342,3 +342,117 @@ def menu_modes(modes, min_fps=15.0, min_width=320):
             if m is fastest or round(m.fps) in (30, 60):
                 keep.append(m)
     return sort_modes(keep or modes)
+
+
+# --- Webcam controls (brightness, exposure, focus…) --------------------------------
+
+VIDIOC_QUERYCTRL = 0xC0445624  # _IOWR('V', 36, struct v4l2_queryctrl), 68 bytes
+VIDIOC_QUERYMENU = 0xC02C5625  # _IOWR('V', 37, struct v4l2_querymenu), 44 bytes (packed)
+VIDIOC_G_CTRL = 0xC008561B     # _IOWR('V', 27, struct v4l2_control), 8 bytes
+VIDIOC_S_CTRL = 0xC008561C     # _IOWR('V', 28, struct v4l2_control)
+_QUERYCTRL = struct.Struct("<II32siiiiI8x")
+_QUERYMENU = struct.Struct("<II32s4x")
+_CONTROL = struct.Struct("<Ii")
+CTRL_FLAG_NEXT = 0x80000000
+CTRL_FLAG_DISABLED, CTRL_FLAG_READ_ONLY, CTRL_FLAG_INACTIVE = 0x01, 0x04, 0x10
+CTRL_INTEGER, CTRL_BOOLEAN, CTRL_MENU = 1, 2, 3
+CONTROL_TYPES = (CTRL_INTEGER, CTRL_BOOLEAN, CTRL_MENU)  # the ones offered in the settings window
+
+
+def control_key(name):
+    """Stable name of a control, as v4l2-ctl prints it ("Exposure Time, Absolute" ->
+    "exposure_time_absolute"): used in the config and for translations."""
+    key = "".join(c if c.isalnum() else "_" for c in name.lower())
+    while "__" in key:
+        key = key.replace("__", "_")
+    return key.strip("_")
+
+
+@dataclass
+class Control:
+    id: int
+    key: str
+    name: str        # as the driver reports it (English)
+    type: int
+    minimum: int
+    maximum: int
+    step: int
+    default: int
+    value: int
+    flags: int
+    menu: dict       # menu controls: {index: driver name}
+
+    @property
+    def inactive(self):
+        """Ignored by the webcam in its current state (e.g. manual exposure while auto)."""
+        return bool(self.flags & (CTRL_FLAG_INACTIVE | CTRL_FLAG_READ_ONLY))
+
+
+def _menu(fd, ctrl_id, minimum, maximum):
+    items = {}
+    for index in range(minimum, maximum + 1):
+        buf = bytearray(_QUERYMENU.pack(ctrl_id, index, b""))
+        try:
+            fcntl.ioctl(fd, VIDIOC_QUERYMENU, buf, True)
+        except OSError:
+            continue  # holes are allowed
+        items[index] = _QUERYMENU.unpack(buf)[2].split(b"\0", 1)[0].decode(errors="replace")
+    return items
+
+
+def list_controls(path):
+    """The webcam's integer, on/off and menu controls with their current values."""
+    controls = []
+    fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+    try:
+        next_id = CTRL_FLAG_NEXT
+        while True:
+            buf = bytearray(_QUERYCTRL.pack(next_id, 0, b"", 0, 0, 0, 0, 0))
+            try:
+                fcntl.ioctl(fd, VIDIOC_QUERYCTRL, buf, True)
+            except OSError:
+                break  # EINVAL: no more controls
+            cid, ctype, name, lo, hi, step, default, flags = _QUERYCTRL.unpack(buf)
+            next_id = cid | CTRL_FLAG_NEXT
+            if ctype not in CONTROL_TYPES or flags & CTRL_FLAG_DISABLED:
+                continue
+            name = name.split(b"\0", 1)[0].decode(errors="replace")
+            try:
+                value = _get(fd, cid)
+            except OSError:
+                continue
+            menu = _menu(fd, cid, lo, hi) if ctype == CTRL_MENU else {}
+            controls.append(Control(cid, control_key(name), name, ctype, lo, hi, max(step, 1),
+                                    default, value, flags, menu))
+    finally:
+        os.close(fd)
+    return controls
+
+
+def _get(fd, ctrl_id):
+    buf = bytearray(_CONTROL.pack(ctrl_id, 0))
+    fcntl.ioctl(fd, VIDIOC_G_CTRL, buf, True)
+    return _CONTROL.unpack(buf)[1]
+
+
+def set_control(path, ctrl_id, value):
+    fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+    try:
+        fcntl.ioctl(fd, VIDIOC_S_CTRL, bytearray(_CONTROL.pack(ctrl_id, value)), True)
+    finally:
+        os.close(fd)
+
+
+def apply_controls(path, saved):
+    """Set the saved values ({key: value}) on the webcam. On/off and menu controls go first:
+    they switch automatic modes, and a manual value is refused while its automatic mode is on.
+    Returns the keys that could not be set."""
+    controls = {c.key: c for c in list_controls(path)}
+    order = sorted((k for k in saved if k in controls), key=lambda k: controls[k].type == CTRL_INTEGER)
+    failed = [k for k in saved if k not in controls]
+    for key in order:
+        try:
+            set_control(path, controls[key].id, int(saved[key]))
+        except OSError:
+            failed.append(key)
+    return failed

@@ -114,3 +114,36 @@ def test_control_does_not_mask_real_errors(monkeypatch):
     assert ctl.remove(7) is False  # EBUSY: still open somewhere
     with pytest.raises(OSError):
         ctl.add("Cam (blur)")
+
+
+# --- Webcam controls ---------------------------------------------------------------
+
+def test_control_ioctl_layouts():
+    assert v4l2._QUERYCTRL.size == 68 and v4l2.VIDIOC_QUERYCTRL == 0xC0445624
+    assert v4l2._QUERYMENU.size == 44 and v4l2.VIDIOC_QUERYMENU == 0xC02C5625
+    assert v4l2._CONTROL.size == 8
+
+
+@pytest.mark.parametrize("name, key", [
+    ("Exposure Time, Absolute", "exposure_time_absolute"),
+    ("Exposure, Dynamic Framerate", "exposure_dynamic_framerate"),
+    ("White Balance, Automatic", "white_balance_automatic"),
+    ("Brightness", "brightness"),
+])
+def test_control_key(name, key):
+    assert v4l2.control_key(name) == key
+
+
+def test_apply_controls_switches_auto_modes_first(monkeypatch):
+    def ctl(cid, key, ctype):
+        return v4l2.Control(cid, key, key, ctype, 0, 1000, 1, 0, 0, 0, {})
+    monkeypatch.setattr(v4l2, "list_controls", lambda path: [
+        ctl(1, "exposure_time_absolute", v4l2.CTRL_INTEGER), ctl(2, "auto_exposure", v4l2.CTRL_MENU),
+        ctl(3, "focus_absolute", v4l2.CTRL_INTEGER), ctl(4, "focus_automatic_continuous", v4l2.CTRL_BOOLEAN)])
+    done = []
+    monkeypatch.setattr(v4l2, "set_control", lambda path, cid, value: done.append(cid))
+    failed = v4l2.apply_controls("/dev/null", {"exposure_time_absolute": 400, "focus_absolute": 30,
+                                               "auto_exposure": 1, "focus_automatic_continuous": 0,
+                                               "gone": 1})
+    assert set(done[:2]) == {2, 4} and set(done[2:]) == {1, 3}, "auto switches before manual values"
+    assert failed == ["gone"]

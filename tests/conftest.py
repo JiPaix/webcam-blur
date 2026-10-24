@@ -13,6 +13,8 @@ if "XDG_CACHE_HOME" not in os.environ:
     _cache = tempfile.mkdtemp(prefix="webcam-blur-test-cache-")
     os.environ["XDG_CACHE_HOME"] = _cache
     atexit.register(shutil.rmtree, _cache, ignore_errors=True)
+# Qt widgets (the settings window) without a display.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # Test the checkout, unless CI asks to test the installed package.
 if not os.environ.get("WEBCAM_BLUR_TEST_INSTALLED"):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -24,6 +26,13 @@ from webcam_blur import i18n  # noqa: E402
 from webcam_blur import models as model_files  # noqa: E402
 
 i18n.setup("en")  # also for module-scoped fixtures, which run before the autouse one below
+
+
+@pytest.fixture(scope="session")
+def qt_app():
+    # One QApplication for the whole run: a process cannot switch from a QCoreApplication.
+    from PyQt6.QtWidgets import QApplication
+    return QApplication.instance() or QApplication([])
 DATA = Path(__file__).parent / "data"
 W, H = 1280, 720
 

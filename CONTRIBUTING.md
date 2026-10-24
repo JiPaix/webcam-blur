@@ -31,6 +31,7 @@ the suffix.
 ## Code
 
 - `webcam_blur/app.py`: tray icon and menu.
+- `webcam_blur/settings.py`: the webcam settings window (blur, resolution, image controls).
 - `webcam_blur/manager.py`: matches virtual cameras to plugged-in webcams.
 - `webcam_blur/worker.py`: one thread per webcam: keeps its virtual camera ready and
   starts the stream process while an app reads it.

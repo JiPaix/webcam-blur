@@ -1,5 +1,6 @@
 """User settings, stored as JSON in ~/.config/webcam-blur/config.json."""
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -17,9 +18,10 @@ DEFAULTS = {
     "cameras": {},      # per-camera settings, keyed by Camera.key
 }
 
-# Per camera: "blur" (effect on/off), "virtual" (create its virtual camera) and
-# "mode" ({"width", "height", "fps"} chosen in the menu, or None for automatic).
-CAMERA_DEFAULTS = {"blur": True, "virtual": True, "mode": None}
+# Per camera: "blur" (effect on/off), "virtual" (create its virtual camera), "mode"
+# ({"width", "height", "fps"} chosen in the settings, or None for automatic) and "controls"
+# (image controls changed in the settings, {control key: value}, set again on plug-in).
+CAMERA_DEFAULTS = {"blur": True, "virtual": True, "mode": None, "controls": {}}
 
 
 def _migrate(data):
@@ -47,7 +49,7 @@ class Config:
             data = json.loads(path.read_text())
         except (OSError, ValueError):
             data = {}
-        self.data = {**DEFAULTS, **_migrate(data)}
+        self.data = {**copy.deepcopy(DEFAULTS), **_migrate(data)}
         if self.data["strength"] not in STRENGTHS:
             self.data["strength"] = DEFAULTS["strength"]
         if self.data["quality"] not in QUALITIES:
@@ -64,7 +66,8 @@ class Config:
         """Settings dict of one camera (created with defaults on first sight)."""
         cam = self.data["cameras"].setdefault(key, {})
         for k, v in CAMERA_DEFAULTS.items():
-            cam.setdefault(k, v)
+            if k not in cam:
+                cam[k] = copy.deepcopy(v)  # not one "controls" dict shared by all cameras
         return cam
 
     def save(self):
