@@ -22,6 +22,7 @@ import numpy as np  # noqa: E402
 
 from webcam_blur import i18n, matting  # noqa: E402
 
+i18n.setup("en")  # also for module-scoped fixtures, which run before the autouse one below
 DATA = Path(__file__).parent / "data"
 W, H = 1280, 720
 

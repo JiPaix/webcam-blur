@@ -78,6 +78,20 @@ def consume(device, seconds, tmp_path):
     return finish_consumer(start_consumer(device, seconds, out), out)
 
 
+def advertised_fps(path):
+    """Frame rate a newly opening app would read (VIDIOC_G_PARM on the capture side)."""
+    import fcntl
+    import struct
+    fd = os.open(path, os.O_RDWR)
+    try:
+        parm = bytearray(struct.pack("<I", v4l2.V4L2_BUF_TYPE_VIDEO_CAPTURE) + b"\0" * 200)
+        fcntl.ioctl(fd, 0xC0CC5615, parm, True)  # VIDIOC_G_PARM
+        num, den = struct.unpack_from("<II", parm, 12)
+        return den / num if num else None
+    finally:
+        os.close(fd)
+
+
 def labels(control):
     return list(control.devices().values())
 
@@ -250,6 +264,15 @@ def test_resolution_choice(pipeline, tmp_path):
         assert wait_for(lambda: worker.mode == small, 5), "idle virtual camera should switch right away"
         _, out = consume(worker.output_path, 3, tmp_path)
         assert out.shape == (360, 640, 3)
+        # The consumer (OpenCV) requested 30 fps on the shared rate; once idle, the chosen rate is back.
+        settings["mode"] = v4l2.Mode(640, 360, 15.0, "YUYV").to_config()
+        worker.modes = v4l2.sort_modes(worker.modes + [v4l2.Mode(640, 360, 15.0, "YUYV")])
+        assert wait_for(lambda: advertised_fps(worker.output_path) == 15.0, 6)
+        _, out = consume(worker.output_path, 2, tmp_path)
+        assert wait_for(lambda: advertised_fps(worker.output_path) == 15.0, IDLE_GRACE + 5)
+        worker.modes = [m for m in worker.modes if m.fps != 15.0]
+        settings["mode"] = small.to_config()
+        assert wait_for(lambda: worker.mode == small, 5)
 
         # While an app reads, the change waits and the menu says so.
         out_path = tmp_path / "pending.npy"

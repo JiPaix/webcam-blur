@@ -89,6 +89,9 @@ class CameraWorker(threading.Thread):
             while not self.stop_evt.is_set() and self.wanted_mode() == mode:
                 if v4l2.readers_of(self.output_path) == 0:
                     out.write_black()
+                    # Readers can overwrite the advertised rate (it is shared, and e.g. OpenCV
+                    # requests 30 fps on open): restore it for the next app.
+                    out.set_fps(mode.fps)
                     self.stop_evt.wait(1.0)
                     continue
                 self.stream(out, mode)
