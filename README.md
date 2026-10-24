@@ -22,8 +22,9 @@ Meet, Discord, OBS, Firefox, Chrome… Turn it on and off with one click in the 
   webcams. Right-click for per-webcam settings.
 - **Stays out of the way.** Until an app actually uses a camera, it needs about 40 MB of
   memory and next to no processor time, and the webcam stays off.
-- **Uses your graphics card** (AMD or NVIDIA) when it can, which takes most of the work
-  off your processor. It falls back to the processor otherwise.
+- **Light by default.** About half a processor core at 720p and 30 fps. A graphics card
+  (AMD or NVIDIA) is optional: it unlocks the *High* quality and takes the load off the
+  processor at higher resolutions and frame rates.
 - **Private.** Everything happens on your computer. No account, no cloud, nothing sent
   anywhere.
 - **In your language.** English and French so far. [Adding a language](CONTRIBUTING.md)
@@ -48,8 +49,11 @@ menu.
     webcam itself (e.g. 1080p · 30 fps or 720p · 60 fps). *Automatic* picks 720p at
     30 fps, which is what video-call apps send anyway.
 - **Blur strength:** light, medium or strong (see the pictures above).
-- **Use GPU** and **Quality:** shown only if your graphics card passed a quick test at
-  startup. *Standard* uses less memory. *High* gives slightly finer edges around hair.
+- **Quality:** how finely the AI model looks at you. *Low*, the default, is the
+  lightest, and its edges differ very little from *Standard*. *High* gives slightly
+  finer edges around hair and needs a graphics card. All the numbers are in
+  [Memory and speed](#memory-and-speed).
+- **Use GPU:** shown only if your graphics card passed a quick test at startup.
 - **Start at login.**
 - A greyed-out line shows the processor, memory and graphics memory the app uses right now.
 
@@ -72,11 +76,15 @@ Any app that uses a webcam: Zoom, Teams, Meet and other browser-based calls, Dis
 Slack, Skype, OBS, Jitsi… If your app lists cameras, the "(blur)" ones are there.
 
 **Will it slow down my computer?**
-Only while an app uses a camera. On the test machine (Ryzen 7 9800X3D, Radeon RX 9070),
-blurring a 720p webcam at 60 fps takes about 1.6 processor cores and 1.3 GB of memory
-with the graphics card. Without the card it takes about 4 cores and 250 MB. When no app
-uses a camera, it needs about 40 MB and next to no processor time. See
-[Memory and speed](#memory-and-speed) for details.
+Only while an app uses a camera. With the default settings (720p at 30 fps, *Low*
+quality), blurring takes about half a processor core on the test machine (Ryzen 7
+9800X3D, Radeon RX 9070), and 210 MB of memory without the graphics card or 950 MB with
+it. When no app uses a camera, it needs about 40 MB and next to no processor time. See
+[Memory and speed](#memory-and-speed) for every setting.
+
+**My computer is short on memory or power.**
+Keep *Low* quality and untick *Use GPU*. The graphics card saves a little processor
+time, but its drivers alone take several hundred MB of memory.
 
 **The "Use GPU" option is missing.**
 Your graphics card didn't pass the startup test, or onnxruntime was installed without
@@ -85,9 +93,16 @@ GPU support. Blurring still works, on the processor. The reason is in the log:
 `python-onnxruntime-cuda` (NVIDIA).
 
 **The first call after installing takes a minute to use the GPU.**
-That's normal on AMD. The model is prepared for your card once per resolution
-(1–2 minutes, also after a graphics driver update), and the processor does the work
-meanwhile.
+That's normal on AMD. The model is prepared for your card once per resolution and
+quality (1–2 minutes, also after a graphics driver update), and the processor does the
+work meanwhile.
+
+**I chose 60 fps but my app gets 30.**
+Many webcams lower their frame rate in dim light to expose each picture longer. On
+Logitech webcams this is the *Exposure, dynamic framerate* setting: turn it off with
+[cameractrls](https://github.com/soyersoyer/cameractrls), `guvcview`, or
+`v4l2-ctl -d /dev/video0 -c exposure_dynamic_framerate=0`. The picture gets darker
+instead.
 
 **How do I change brightness, focus or zoom?**
 Those settings live in the webcam itself. Change them with a tool like
@@ -102,7 +117,8 @@ resolution applies once no app is using the camera.
 The person is detected by an AI model. It struggles with things the same colour as
 the wall behind them (a white headset against a white wall, for example), with
 flyaway hair and with fast movements. A background that contrasts with you, and light
-on your face rather than behind you, help a lot. *High* quality helps a bit.
+on your face rather than behind you, help a lot. *High* quality helps a bit, and
+*Standard* can help with fast movements (*Low* updates the cut-out 30 times a second).
 
 ## Installation
 
@@ -186,31 +202,42 @@ cannot create virtual cameras at runtime: build a newer one from source there.
 - **People are cut out** with [Robust Video Matting](https://github.com/PeterL1n/RobustVideoMatting)
   (ONNX Runtime). The background is blurred with a background-weighted Gaussian, so the
   person doesn't bleed into the blur.
-- **On the processor,** MobileNetV3 runs on a frame scaled down to 640 px.
-- **On the graphics card,** the model runs at full resolution: MobileNetV3 for
-  *Standard*, ResNet50 for *High*, in half precision on MIGraphX. GPU execution
-  providers need fixed input sizes, so the model is converted once per resolution
-  (`~/.cache/webcam-blur/`). MIGraphX also compiles it once per resolution.
+- **Quality** sets the model and the size of the frame it sees. The cut-out is then
+  scaled back to the webcam's resolution:
+
+  | | Processor | Graphics card |
+  | --- | --- | --- |
+  | *Low* | MobileNetV3, 320 px wide | MobileNetV3, 640 px wide |
+  | *Standard* | MobileNetV3, 640 px wide | MobileNetV3, full resolution |
+  | *High* | as *Standard* | ResNet50, full resolution |
+
+  Above 30 fps, *Low* runs the model on every other frame and reuses the cut-out in
+  between. On the graphics card, models run in half precision on MIGraphX. GPU
+  execution providers need fixed input sizes, so the model is converted once per size
+  (`~/.cache/webcam-blur/`) and MIGraphX also compiles it once per size.
 - **The GPU check** runs a tiny model on the GPU in a throwaway process at startup. A
   provider that silently falls back to the processor counts as a failure.
 
 ### Memory and speed
 
-Measured on a Ryzen 7 9800X3D with a Radeon RX 9070 (ROCm 7). Webcam at 1280×720 and
-60 fps, 59.5 fps delivered in every mode. Memory is the PSS of all the app's processes:
+Measured on a Ryzen 7 9800X3D with a Radeon RX 9070 (ROCm 7), with a 1280×720 webcam.
+Every setting delivers the webcam's full frame rate. Memory is the PSS of all the app's
+processes, in the same units as the tray menu:
 
-| | Memory | Processor | Graphics memory |
-| --- | --- | --- | --- |
-| No app using a camera | 39 MB | ~2 % of one core | — |
-| GPU, *Standard* quality | 1.3 GB | 1.6 cores | 616 MB |
-| GPU, *High* quality | 1.7 GB | 1.6 cores | 678 MB |
-| Processor only | 250 MB | 3.9 cores | — |
+| | Processor, 30 fps | Processor, 60 fps | Memory | Graphics memory |
+| --- | --- | --- | --- | --- |
+| No app using a camera | 0.02 cores | 0.02 cores | 40 MB | — |
+| Processor only, *Low* (default) | 0.6 cores | 0.8 cores | 210 MB | — |
+| Processor only, *Standard* | 1.3 cores | 2.5 cores | 260 MB | — |
+| GPU, *Low* (default) | 0.5 cores | 0.7 cores | 950 MB | 460 MB |
+| GPU, *Standard* | 0.5 cores | 0.9 cores | 1.05 GB | 650 MB |
+| GPU, *High* | 0.5 cores | 0.9 cores | 1.3 GB | 710 MB |
 
-ROCm and MIGraphX alone take about 470 MB as soon as anything runs on an AMD GPU. That
-is why the processor path uses much less memory. With the GPU, the processor still
-decodes the webcam's video, composes the blur and converts formats. At 30 fps,
-processor use roughly halves (0.8 cores measured with *Standard*). The first call at a new resolution also compiles the
-model, which temporarily uses more memory.
+ROCm and MIGraphX alone take about 300 MB of memory for their libraries as soon as
+anything runs on an AMD GPU, plus the compiled model kept in memory. That is why the
+processor path uses much less memory. With the GPU, the processor still decodes the
+webcam's video, composes the blur and converts formats. The first call at a new
+resolution or quality also compiles the model, which temporarily uses more memory.
 
 ### Configuration file
 
@@ -221,7 +248,7 @@ Everything is in the tray menu. Settings are stored in
 | --- | --- |
 | `strength` | `light`, `medium` or `strong` |
 | `use_gpu` | `true` / `false` |
-| `quality` | `standard` or `high` (GPU model) |
+| `quality` | `low` (default), `standard` or `high` (`high` needs the GPU) |
 | `language` | e.g. `"fr"`; `null` follows the system locale |
 | `cameras.<id>.blur` | blur on/off for this camera |
 | `cameras.<id>.mode` | resolution chosen in the menu (`{"width", "height", "fps"}`), `null` = automatic |

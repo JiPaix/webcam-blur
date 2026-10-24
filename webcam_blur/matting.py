@@ -1,8 +1,8 @@
 """Person matting with Robust Video Matting (RVM), on CPU or in a GPU subprocess.
 
-- CPU: RVM mobilenetv3, frame downscaled to at most 640 px wide.
-- GPU: RVM at full resolution, mobilenetv3 ("standard" quality) or resnet50 ("high"),
-  in half precision on MIGraphX. GPU execution providers such as MIGraphX
+- CPU: RVM mobilenetv3, frame downscaled to at most 320 px ("low" quality) or 640 px wide.
+- GPU: RVM mobilenetv3 at most 640 px wide ("low") or at full resolution ("standard"),
+  or resnet50 at full resolution ("high"), in half precision on MIGraphX. GPU execution providers such as MIGraphX
   need static shapes, so the model is "frozen" once per camera resolution
   (constant downsample_ratio, fixed input sizes) and cached. Inference runs in a
   subprocess started for each stream and stopped afterwards, so nothing stays on
@@ -10,7 +10,9 @@
 """
 
 import base64
+import ctypes
 import multiprocessing as mp
+import os
 import shutil
 from multiprocessing import shared_memory
 
@@ -23,6 +25,39 @@ from .models import CACHE, CPU_MODEL, GPU_MODELS, MODELS, model_path  # noqa: F4
 # GPU execution providers, in order of preference.
 GPU_PROVIDERS = ("MIGraphXExecutionProvider", "CUDAExecutionProvider", "ROCMExecutionProvider")
 GPU_TIMEOUT = 2.0  # seconds to wait for one GPU frame before falling back to CPU
+
+# Widest frame the model sees, per quality. The cut-out is scaled back up: edges barely
+# change, and a smaller input is much cheaper.
+CPU_WIDTH = {"low": 320, "standard": 640, "high": 640}  # "high" needs the GPU
+GPU_WIDTH = {"low": 640}  # other qualities: the camera's full resolution
+
+# OpenCV's default (one thread per core) spends more time handing out work and waiting
+# than computing on frames this size.
+CV_THREADS = 2
+
+
+def gpu_input_size(width, height, quality):
+    limit = GPU_WIDTH.get(quality, width)
+    if width <= limit:
+        return width, height
+    return limit, round(height * limit / width / 2) * 2
+
+
+def session_options(threads):
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = threads
+    opts.inter_op_num_threads = 1
+    # Idle threads spin waiting for work by default, burning CPU between frames.
+    opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    return opts
+
+
+def release_memory():
+    """Give memory freed by model loading back to the system (glibc keeps it otherwise)."""
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass  # not glibc
 
 
 def gpu_provider():
@@ -80,30 +115,36 @@ def downsample_ratio(width, height, target=320):
 class CpuMatter:
     """RVM mobilenetv3 on CPU; the recurrent state belongs to one camera."""
 
-    def __init__(self, session):
+    def __init__(self, session, width=CPU_WIDTH["standard"]):
         self.session = session
+        self.width = width
         self.reset()
 
     @staticmethod
-    def create_session(threads=3):
-        opts = ort.SessionOptions()
-        opts.intra_op_num_threads = threads
-        opts.inter_op_num_threads = 1
-        return ort.InferenceSession(str(model_path(CPU_MODEL)), opts, providers=["CPUExecutionProvider"])
+    def create_session(threads=None):
+        # Without spinning, extra threads cost little and keep 60 fps within each frame's time.
+        threads = threads or max(1, min(6, (os.cpu_count() or 2) // 2))
+        return ort.InferenceSession(str(model_path(CPU_MODEL)), session_options(threads),
+                                    providers=["CPUExecutionProvider"])
+
+    def set_width(self, width):
+        if width != self.width:
+            self.width = width
+            self.reset()  # the recurrent state has the old size
 
     def reset(self):
         self.rec = [np.zeros((1, 1, 1, 1), np.float32)] * 4
 
     def alpha(self, frame):
         h, w = frame.shape[:2]
-        scale = min(1.0, 640 / w)
+        scale = min(1.0, self.width / w)
         small = cv2.resize(frame, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA) \
             if scale < 1 else frame
         sh, sw = small.shape[:2]
         x = (cv2.cvtColor(small, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0).transpose(2, 0, 1)[None]
         _fgr, pha, *self.rec = self.session.run(None, {
             "src": x, "r1i": self.rec[0], "r2i": self.rec[1], "r3i": self.rec[2], "r4i": self.rec[3],
-            "downsample_ratio": np.array([downsample_ratio(sw, sh)], np.float32),
+            "downsample_ratio": np.array([downsample_ratio(sw, sh, self.width // 2)], np.float32),
         })
         a = pha[0, 0]
         return cv2.resize(a, (w, h), interpolation=cv2.INTER_LINEAR) if a.shape != (h, w) else a
@@ -172,7 +213,7 @@ def _gpu_session(path, provider, conn):
         if not before:
             conn.send("compiling")
         options = {"migraphx_model_cache_dir": str(cache), "migraphx_fp16_enable": "1"}
-    sess = ort.InferenceSession(str(path), providers=[(provider, options)])
+    sess = ort.InferenceSession(str(path), session_options(1), providers=[(provider, options)])
     if sess.get_providers()[0] != provider:
         raise RuntimeError(f"{provider} unavailable")
     if provider == "MIGraphXExecutionProvider":
@@ -194,6 +235,7 @@ def _attach(name):
 
 def gpu_process(conn, frame_name, alpha_name, width, height, provider, model):
     """GPU subprocess: reads frames from shared memory and writes the alpha back."""
+    cv2.setNumThreads(CV_THREADS)
     shm_f = _attach(frame_name)
     shm_a = _attach(alpha_name)
     frame = np.ndarray((height, width, 3), np.uint8, shm_f.buf)
@@ -208,6 +250,7 @@ def gpu_process(conn, frame_name, alpha_name, width, height, provider, model):
         _, _, *rec = sess.run(None, {"src": np.zeros(shapes["src"], np.float32),
                                      "r1i": rec[0], "r2i": rec[1], "r3i": rec[2], "r4i": rec[3]})
         rec = [np.zeros(shapes[f"r{k}i"], np.float32) for k in range(1, 5)]
+        release_memory()  # ~250 MB left over from loading the compiled model
     except Exception as e:
         conn.send(f"error:{e}")
         return
@@ -231,6 +274,8 @@ def gpu_process(conn, frame_name, alpha_name, width, height, provider, model):
 class GpuMatter:
     """Drives one camera's GPU subprocess for the duration of a stream.
 
+    ``width``×``height`` is the model's input size: frames of another size are scaled to it,
+    and the cut-out back to the frame's size.
     ``status``: starting | preparing | compiling | ready | error:<message>
     """
 
@@ -257,7 +302,10 @@ class GpuMatter:
         return self.status == "ready"
 
     def alpha(self, frame):
-        self.frame[:] = frame
+        h, w = frame.shape[:2]
+        scaled = (w, h) != (self.width, self.height)
+        self.frame[:] = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_AREA) \
+            if scaled else frame
         try:
             self.conn.send("run")
             if not self.conn.poll(GPU_TIMEOUT):
@@ -266,6 +314,8 @@ class GpuMatter:
         except (OSError, EOFError, TimeoutError) as e:
             self.status = f"error:{e}"
             return None
+        if scaled:
+            return cv2.resize(self.alpha_buf, (w, h), interpolation=cv2.INTER_LINEAR)
         return self.alpha_buf.copy()
 
     def close(self):

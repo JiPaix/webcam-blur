@@ -55,8 +55,10 @@ def test_migrates_capture_mode_overrides(tmp_path):
 
 def test_quality(tmp_path):
     path = tmp_path / "config.json"
-    assert Config(path)["quality"] == "standard"
+    assert Config(path)["quality"] == "low"
     path.write_text(json.dumps({"quality": "ultra"}))
+    assert Config(path)["quality"] == "low"
+    path.write_text(json.dumps({"quality": "standard"}))  # 0.1.x users keep their choice
     assert Config(path)["quality"] == "standard"
     path.write_text(json.dumps({"quality": "haute"}))  # pre-release French value
     assert Config(path)["quality"] == "high"

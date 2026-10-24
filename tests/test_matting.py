@@ -13,7 +13,7 @@ import pytest
 from conftest import BACKGROUND, PERSON, TEXTURED, detail, mean_abs_diff, region
 
 from webcam_blur import matting
-from webcam_blur.stream import blur_background
+from webcam_blur.stream import blur_background, matting_interval
 
 pytestmark = pytest.mark.usefixtures("models")
 
@@ -33,11 +33,44 @@ def assert_good_matte(a):
         assert region(a, name).mean() < 0.05, f"{name} should be background"
 
 
-def test_cpu_matting(frame):
-    matter = matting.CpuMatter(matting.CpuMatter.create_session())
+@pytest.mark.parametrize("quality", ["low", "standard"])
+def test_cpu_matting(frame, quality):
+    matter = matting.CpuMatter(matting.CpuMatter.create_session(), matting.CPU_WIDTH[quality])
     a = warm_alpha(matter, frame)
     assert a.shape == frame.shape[:2]
     assert_good_matte(a)
+
+
+def test_low_quality_cut_out_is_close_to_standard(frame):
+    session = matting.CpuMatter.create_session()
+    low = warm_alpha(matting.CpuMatter(session, matting.CPU_WIDTH["low"]), frame)
+    standard = warm_alpha(matting.CpuMatter(session, matting.CPU_WIDTH["standard"]), frame)
+    assert np.abs(low - standard).mean() < 0.02
+
+
+def test_cpu_matter_width_change_resets_its_state(frame):
+    matter = matting.CpuMatter(matting.CpuMatter.create_session(), matting.CPU_WIDTH["standard"])
+    warm_alpha(matter, frame, 2)
+    matter.set_width(matting.CPU_WIDTH["low"])
+    assert_good_matte(warm_alpha(matter, frame))  # would fail on a recurrent state of the old size
+
+
+@pytest.mark.parametrize("size, quality, expected", [
+    ((1280, 720), "low", (640, 360)),
+    ((1920, 1080), "low", (640, 360)),
+    ((640, 480), "low", (640, 480)),
+    ((1280, 720), "standard", (1280, 720)),
+    ((1920, 1080), "high", (1920, 1080)),
+])
+def test_gpu_input_size(size, quality, expected):
+    assert matting.gpu_input_size(*size, quality) == expected
+
+
+@pytest.mark.parametrize("fps, quality, expected", [
+    (30, "low", 1), (60, "low", 2), (50, "low", 1), (15, "low", 1), (60, "standard", 1), (60, "high", 1),
+])
+def test_matting_interval(fps, quality, expected):
+    assert matting_interval(fps, quality) == expected
 
 
 def test_cpu_matting_other_resolution(frame):
@@ -92,11 +125,12 @@ def shm_entries():
     return {f for f in os.listdir("/dev/shm") if f.startswith("psm_")}
 
 
-@pytest.mark.parametrize("quality", ["standard", "high"])
+@pytest.mark.parametrize("quality", ["low", "standard", "high"])
 def test_gpu_subprocess_pipeline(frame, quality):
     h, w = frame.shape[:2]
     before = shm_entries()
-    gpu = matting.GpuMatter(w, h, "CPUExecutionProvider", matting.GPU_MODELS[quality])
+    size = matting.gpu_input_size(w, h, quality)
+    gpu = matting.GpuMatter(*size, "CPUExecutionProvider", matting.GPU_MODELS[quality])
     try:
         deadline = time.monotonic() + 180
         while not gpu.ready():

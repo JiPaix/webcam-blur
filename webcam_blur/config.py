@@ -7,12 +7,12 @@ from pathlib import Path
 PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "webcam-blur" / "config.json"
 
 STRENGTHS = {"light": 3.0, "medium": 6.0, "strong": 12.0}  # blur sigma, in quarter-resolution pixels
-QUALITIES = ("standard", "high")  # GPU model, see models.GPU_MODELS
+QUALITIES = ("low", "standard", "high")  # see matting.CPU_WIDTH and models.GPU_MODELS
 
 DEFAULTS = {
     "strength": "medium",
     "use_gpu": True,
-    "quality": "standard",
+    "quality": "low",
     "language": None,   # None = follow the system locale
     "cameras": {},      # per-camera settings, keyed by Camera.key
 }

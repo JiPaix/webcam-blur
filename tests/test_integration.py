@@ -24,7 +24,7 @@ from conftest import FRAME, PERSON, TEXTURED, detail, mean_abs_diff
 
 from webcam_blur import cameras, gpucheck, v4l2
 from webcam_blur.cameras import Camera
-from webcam_blur.config import Config
+from webcam_blur.config import DEFAULTS, Config
 from webcam_blur.resources import our_pids
 from webcam_blur.worker import IDLE_GRACE
 
@@ -316,7 +316,7 @@ def test_gpu_path_in_live_pipeline(pipeline, tmp_path, monkeypatch):
         stats, out = finish_consumer(proc, out_path)
     finally:
         pipeline.config.data["use_gpu"] = False
-        pipeline.config.data["quality"] = "standard"
+        pipeline.config.data["quality"] = DEFAULTS["quality"]
     print(f"\nconsumer stats (GPU path on CPU provider): {stats}")
     for name in TEXTURED:
         assert detail(out, name) < 0.3 * detail(FRAME, name), f"{name} should be blurred"

@@ -14,7 +14,6 @@ from dataclasses import asdict
 
 from . import gpucheck, v4l2
 from .config import STRENGTHS
-from .models import GPU_MODELS
 from .proc import module_command
 
 IDLE_GRACE = 3.0  # seconds without readers before stopping the stream (and releasing the webcam)
@@ -104,7 +103,7 @@ class CameraWorker(threading.Thread):
             reason = "no_onnx" if support.state == "no_onnx" else "no_gpu"
         return {"blur": self.settings["blur"], "sigma": STRENGTHS[self.config["strength"]],
                 "gpu_provider": support.provider if use_gpu else None,
-                "gpu_model": GPU_MODELS[self.config["quality"]], "cpu_reason": reason}
+                "quality": self.config["quality"], "cpu_reason": reason}
 
     def stream(self, out, mode):
         cmd, env = module_command("stream")

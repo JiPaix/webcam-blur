@@ -115,15 +115,18 @@ class Tray:
             sub.addAction(act)
 
         # GPU options are only offered where the startup check ran a model on the GPU.
-        if gpucheck.gpu_support.state == "ok":
-            sub = m.addMenu(tr("menu.quality"))
-            group = QActionGroup(sub)
-            for key in QUALITIES:
-                act = QAction(tr(f"quality.{key}"), sub, checkable=True)
-                act.setChecked(self.config["quality"] == key)
-                act.triggered.connect(lambda _=False, k=key: self.config.__setitem__("quality", k))
-                group.addAction(act)
-                sub.addAction(act)
+        gpu_ok = gpucheck.gpu_support.state == "ok"
+        sub = m.addMenu(tr("menu.quality"))
+        group = QActionGroup(sub)
+        for key in QUALITIES:
+            if key == "high" and not gpu_ok:
+                continue  # far too slow on a processor
+            act = QAction(tr(f"quality.{key}"), sub, checkable=True)
+            act.setChecked(self.config["quality"] == key)
+            act.triggered.connect(lambda _=False, k=key: self.config.__setitem__("quality", k))
+            group.addAction(act)
+            sub.addAction(act)
+        if gpu_ok:
             act = m.addAction(tr("menu.use_gpu"))
             act.setCheckable(True)
             act.setChecked(self.config["use_gpu"])
