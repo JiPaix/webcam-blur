@@ -20,6 +20,14 @@ CPU_MODEL = "rvm_mobilenetv3_fp32.onnx"
 # and needs more memory.
 GPU_MODELS = {"low": "rvm_mobilenetv3_fp32.onnx", "standard": "rvm_mobilenetv3_fp32.onnx",
               "high": "rvm_resnet50_fp32.onnx"}
+GPU_WIDTH = {"low": 640}  # widest model input per quality; others: the camera's full resolution
+
+
+def gpu_input_size(width, height, quality):
+    limit = GPU_WIDTH.get(quality, width)
+    if width <= limit:
+        return width, height
+    return limit, round(height * limit / width / 2) * 2
 
 USER_DATA = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "webcam-blur"
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "webcam-blur"

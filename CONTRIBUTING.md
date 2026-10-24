@@ -32,10 +32,19 @@ the suffix.
 
 - `webcam_blur/app.py`: tray icon and menu.
 - `webcam_blur/manager.py`: matches virtual cameras to plugged-in webcams.
-- `webcam_blur/worker.py`: one thread per webcam (capture → blur → virtual camera).
+- `webcam_blur/worker.py`: one thread per webcam: keeps its virtual camera ready and
+  starts the stream process while an app reads it.
+- `webcam_blur/stream.py`: the stream process (capture → matting → blur → virtual camera).
 - `webcam_blur/matting.py`: RVM models (CPU, and the GPU subprocess).
+- `webcam_blur/prepare.py`: freezes and compiles GPU models ahead of time, at low priority.
+- `webcam_blur/models.py`: model files and the model per quality.
+- `webcam_blur/gpucheck.py`: the startup GPU check, in a throwaway process.
+- `webcam_blur/resources.py`: the resource line of the menu.
 - `webcam_blur/v4l2.py`: kernel interfaces (v4l2loopback control, output, webcam modes).
 - `webcam_blur/cameras.py`: webcam detection and hotplug (udev).
+
+The tray process must stay light: it never imports OpenCV, onnxruntime, NumPy or onnx
+(a test checks it). Anything that needs them runs in a subprocess.
 
 Run from a checkout with `python -m webcam_blur` (see the README for the system files).
 

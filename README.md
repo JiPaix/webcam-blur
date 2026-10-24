@@ -92,10 +92,12 @@ GPU support. Blurring still works, on the processor. The reason is in the log:
 `journalctl --user -t webcam-blur`. On Arch, install `python-onnxruntime-rocm` (AMD) or
 `python-onnxruntime-cuda` (NVIDIA).
 
-**The first call after installing takes a minute to use the GPU.**
-That's normal on AMD. The model is prepared for your card once per resolution and
-quality (1–2 minutes, also after a graphics driver update), and the processor does the
-work meanwhile.
+**My processor gets busy for a few minutes after installing.**
+That's normal on AMD. The AI model is compiled for your graphics card, once for each
+webcam resolution and quality (1–2 minutes each, again after a graphics driver update
+or when you pick a new resolution). It runs at the lowest priority, so everything else,
+calls included, comes first. If a call starts before it's done, the processor does the
+blurring meanwhile.
 
 **I chose 60 fps but my app gets 30.**
 Many webcams lower their frame rate in dim light to expose each picture longer. On
@@ -215,6 +217,11 @@ cannot create virtual cameras at runtime: build a newer one from source there.
   between. On the graphics card, models run in half precision on MIGraphX. GPU
   execution providers need fixed input sizes, so the model is converted once per size
   (`~/.cache/webcam-blur/`) and MIGraphX also compiles it once per size.
+- **Models are prepared ahead of time,** for each webcam's resolution in every quality,
+  in a separate process at the lowest CPU priority. The tray starts it when the GPU check
+  passes and whenever a resolution or the set of webcams changes. A stream that needs a
+  size nobody prepared yet runs it the same way. Each compiled model is stamped with the
+  onnxruntime and ROCm versions, so an update triggers a recompile.
 - **The GPU check** runs a tiny model on the GPU in a throwaway process at startup. A
   provider that silently falls back to the processor counts as a failure.
 
@@ -236,8 +243,8 @@ processes, in the same units as the tray menu:
 ROCm and MIGraphX alone take about 300 MB of memory for their libraries as soon as
 anything runs on an AMD GPU, plus the compiled model kept in memory. That is why the
 processor path uses much less memory. With the GPU, the processor still decodes the
-webcam's video, composes the blur and converts formats. The first call at a new
-resolution or quality also compiles the model, which temporarily uses more memory.
+webcam's video, composes the blur and converts formats. Compiling a model for a new
+resolution temporarily uses more memory, outside calls.
 
 ### Configuration file
 

@@ -11,36 +11,32 @@
 
 import base64
 import ctypes
+import json
 import multiprocessing as mp
 import os
 import shutil
+import subprocess
+import sys
 from multiprocessing import shared_memory
 
 import cv2
 import numpy as np
 import onnxruntime as ort
 
-from .models import CACHE, CPU_MODEL, GPU_MODELS, MODELS, model_path  # noqa: F401  (re-exported)
+from .models import CACHE, CPU_MODEL, GPU_MODELS, MODELS, gpu_input_size, model_path  # noqa: F401  (re-exported)
+from .proc import module_command
 
 # GPU execution providers, in order of preference.
 GPU_PROVIDERS = ("MIGraphXExecutionProvider", "CUDAExecutionProvider", "ROCMExecutionProvider")
 GPU_TIMEOUT = 2.0  # seconds to wait for one GPU frame before falling back to CPU
 
-# Widest frame the model sees, per quality. The cut-out is scaled back up: edges barely
-# change, and a smaller input is much cheaper.
+# Widest frame the model sees on the CPU, per quality (GPU: models.GPU_WIDTH). The cut-out
+# is scaled back up: edges barely change, and a smaller input is much cheaper.
 CPU_WIDTH = {"low": 320, "standard": 640, "high": 640}  # "high" needs the GPU
-GPU_WIDTH = {"low": 640}  # other qualities: the camera's full resolution
 
 # OpenCV's default (one thread per core) spends more time handing out work and waiting
 # than computing on frames this size.
 CV_THREADS = 2
-
-
-def gpu_input_size(width, height, quality):
-    limit = GPU_WIDTH.get(quality, width)
-    if width <= limit:
-        return width, height
-    return limit, round(height * limit / width / 2) * 2
 
 
 def session_options(threads):
@@ -201,17 +197,21 @@ def frozen_model(model, width, height):
     return dest
 
 
-def _gpu_session(path, provider, conn):
+def migraphx_cache(path):
+    """Compiled files of one frozen model. Half precision: same results here, less memory,
+    faster. One folder per model and size: compiled files of the others are left alone."""
+    return CACHE / "migraphx" / f"{path.stem}-fp16"
+
+
+def _gpu_session(path, provider, conn=None):
     options = {}
     if provider == "MIGraphXExecutionProvider":
-        # Half precision: same results here, less memory, faster. One cache folder per
-        # model and resolution: compiled files of the others are left alone.
-        cache = CACHE / "migraphx" / f"{path.stem}-fp16"
+        cache = migraphx_cache(path)
         shutil.rmtree(CACHE / "migraphx" / path.stem, ignore_errors=True)  # 0.1.0's fp32 cache
         cache.mkdir(parents=True, exist_ok=True)
         before = set(cache.glob("*.mxr"))
-        if not before:
-            conn.send("compiling")
+        if not before and conn is not None:
+            conn.send("compiling")  # not prepared by webcam_blur.prepare after all
         options = {"migraphx_model_cache_dir": str(cache), "migraphx_fp16_enable": "1"}
     sess = ort.InferenceSession(str(path), session_options(1), providers=[(provider, options)])
     if sess.get_providers()[0] != provider:
@@ -241,8 +241,13 @@ def gpu_process(conn, frame_name, alpha_name, width, height, provider, model):
     frame = np.ndarray((height, width, 3), np.uint8, shm_f.buf)
     alpha = np.ndarray((height, width), np.float32, shm_a.buf)
     try:
-        if not frozen_path(model, width, height).is_file():
-            conn.send("preparing")
+        from .prepare import is_prepared
+        if not is_prepared(model, width, height, provider):
+            # At the lowest priority, in its own process: the CPU blurs the call meanwhile.
+            conn.send("preparing" if not frozen_path(model, width, height).is_file() else "compiling")
+            cmd, env = module_command("prepare")
+            subprocess.run(cmd, env=env, input=json.dumps([[model, width, height, provider]]), text=True,
+                           stdout=sys.stderr)  # stdout is the stream's status channel
         path = frozen_model(model, width, height)
         sess = _gpu_session(path, provider, conn)
         shapes = {i.name: i.shape for i in sess.get_inputs()}

@@ -18,6 +18,7 @@ from . import gpucheck, i18n, models, v4l2
 from .config import QUALITIES, STRENGTHS, Config
 from .i18n import tr
 from .manager import Manager
+from .prepare import Precompiler, jobs_for
 from .resources import ResourceMeter
 
 AUTOSTART = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "autostart" / "webcam-blur.desktop"
@@ -71,6 +72,7 @@ class Tray:
         self.resources = None
         self.resource_timer = QTimer(interval=2000, timeout=self.update_resources)
         self.resource_timer.start()
+        self.precompiler = Precompiler()
         self.refresh()
         self.tray.show()
         if manager.error:
@@ -191,6 +193,15 @@ class Tray:
         live = any(w.in_use for w, *_ in self.cameras)
         self.tray.setIcon(self.icons[(any_on, live)])
         self.tray.setToolTip(tr("app.tooltip_title") + "\n" + "\n".join(lines))
+        self.prepare_models()
+
+    def prepare_models(self):
+        """Compile GPU models ahead of time for each webcam's resolution, so that the GPU is
+        ready when an app opens a camera, whatever the quality (see prepare.py)."""
+        support = gpucheck.gpu_support
+        if support.state == "ok" and self.config["use_gpu"]:
+            modes = [w.wanted_mode() for w in self.manager.workers.values() if w.modes]
+            self.precompiler.update(jobs_for(modes, self.config["quality"], support.provider))
 
 
     def update_resources(self, sample=True):
