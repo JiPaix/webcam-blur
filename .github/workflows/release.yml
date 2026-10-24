@@ -64,7 +64,9 @@ jobs:
           # Pinned host key; fingerprint SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4,
           # as published on https://aur.archlinux.org
           echo "aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN" > ~/.ssh/known_hosts
-          export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          # ssh takes its home from /etc/passwd (/root), not $HOME (/github/home in a
+          # container job), so both files are passed explicitly.
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes"
           git clone ssh://aur@aur.archlinux.org/webcam-blur.git aur
           cp packaging/arch/PKGBUILD packaging/arch/webcam-blur.install packaging/arch/.SRCINFO aur/
           cd aur
