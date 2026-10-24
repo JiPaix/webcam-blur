@@ -147,3 +147,25 @@ def test_apply_controls_switches_auto_modes_first(monkeypatch):
                                                "gone": 1})
     assert set(done[:2]) == {2, 4} and set(done[2:]) == {1, 3}, "auto switches before manual values"
     assert failed == ["gone"]
+
+
+def test_apply_controls_skips_values_their_auto_mode_ignores(monkeypatch):
+    """Exposure time saved while manual, exposure since set back to automatic: not an error."""
+    state = {"auto": 3}
+
+    def controls(path):
+        inactive = v4l2.CTRL_FLAG_INACTIVE if state["auto"] == 3 else 0
+        return [v4l2.Control(1, "auto_exposure", "Auto Exposure", v4l2.CTRL_MENU, 0, 3, 1, 3, state["auto"], 0, {}),
+                v4l2.Control(2, "exposure_time_absolute", "Exposure", v4l2.CTRL_INTEGER, 3, 2047, 1, 250, 250,
+                             inactive, {})]
+
+    def set_control(path, cid, value):
+        if cid == 1:
+            state["auto"] = value
+        elif state["auto"] == 3:
+            raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(v4l2, "list_controls", controls)
+    monkeypatch.setattr(v4l2, "set_control", set_control)
+    assert v4l2.apply_controls("/dev/null", {"auto_exposure": 3, "exposure_time_absolute": 161}) == []
+    assert v4l2.apply_controls("/dev/null", {"auto_exposure": 1, "exposure_time_absolute": 161}) == []

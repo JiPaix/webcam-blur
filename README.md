@@ -24,7 +24,7 @@ Meet, Discord, OBS, Firefox, Chrome… Turn it on and off with one click in the 
   as sliders, remembered and set again whenever the webcam is plugged in.
 - **Stays out of the way.** Until an app actually uses a camera, it needs about 40 MB of
   memory and next to no processor time, and the webcam stays off.
-- **Light by default.** About half a processor core and 210 MB of memory at 720p and
+- **Light by default.** About 0.6 of a processor core and 220 MB of memory at 720p and
   30 fps. A graphics card is optional (AMD, NVIDIA or Intel, through Vulkan): for about
   50 MB more memory, it takes the load off the processor at higher qualities,
   resolutions and frame rates.
@@ -99,8 +99,8 @@ Slack, Skype, OBS, Jitsi… If your app lists cameras, the "(blur)" ones are the
 
 **Will it slow down my computer?**
 Only while an app uses a camera. With the default settings (720p at 30 fps, *Low*
-quality, on the processor), blurring takes about half a processor core and 210 MB of
-memory on the test machine (Ryzen 7 9800X3D, Radeon RX 9070). When no app uses a
+quality, on the processor), blurring takes about 0.6 of a processor core and 220 MB of
+memory on the test machine (Ryzen 7 9800X3D), or a full core in 1080p. When no app uses a
 camera, it needs about 40 MB and next to no processor time. See
 [Memory and speed](#memory-and-speed) for every setting.
 
@@ -247,26 +247,28 @@ cannot create virtual cameras at runtime: build a newer one from source there.
 
 ### Memory and speed
 
-Measured on a Ryzen 7 9800X3D with a Radeon RX 9070 XT (Vulkan, RADV), with a 1280×720
-webcam. Every setting delivers the webcam's full frame rate. Memory is the PSS of all the
-app's processes, in the same units as the tray menu:
+Measured on a Ryzen 7 9800X3D with a Radeon RX 9070 XT (Vulkan, RADV) and a Logitech
+C922, which films at 60 fps up to 720p and at 30 fps in 1080p. Every setting delivers
+the webcam's full frame rate. Memory is the PSS of all the app's processes, in the same
+units as the tray menu:
 
-| | Processor, 30 fps | Processor, 60 fps | Memory | Graphics memory |
-| --- | --- | --- | --- | --- |
-| No app using a camera | 0.02 cores | 0.02 cores | 40 MB | — |
-| Processor only, *Low* (default) | 0.6 cores | 0.9 cores | 210 MB | — |
-| Processor only, *Standard* | 1.3 cores | 1.6 cores | 250 MB | — |
-| Processor only, *High* | 1.8 cores | 2.4 cores¹ | 480 MB | — |
-| GPU, *Low* | 0.6 cores | 0.8 cores | 260 MB | 60 MB |
-| GPU, *Standard* | 0.6 cores | 1.1 cores | 280 MB | 80 MB |
-| GPU, *High* | 0.6 cores | 1.1 cores | 320 MB | 200 MB |
+| | 720p, 30 fps | 720p, 60 fps | 1080p, 30 fps | Memory (720p / 1080p) | Graphics memory (720p / 1080p) |
+| --- | --- | --- | --- | --- | --- |
+| No app using a camera | 0.02 cores | 0.02 cores | 0.02 cores | 40 MB | — |
+| Processor only, *Low* (default) | 0.6 cores | 0.9 cores | 1.0 cores | 220 / 240 MB | — |
+| Processor only, *Standard* | 1.3 cores | 1.6 cores | 1.8 cores | 260 / 280 MB | — |
+| Processor only, *High* | 1.7 cores | 2.5 cores¹ | 2.1 cores | 480 / 490 MB | — |
+| GPU, *Low* | 0.6 cores | 0.8 cores | 0.9 cores | 260 / 290 MB | 60 / 60 MB |
+| GPU, *Standard* | 0.6 cores | 1.1 cores | 1.0 cores | 280 / 350 MB | 80 / 110 MB |
+| GPU, *High* | 0.6 cores | 1.1 cores | 1.0 cores | 320 / 360 MB | 200 / 230 MB |
 
 ¹ The model runs on every third frame there: on this processor, ResNet50 takes longer
 than a 60 fps frame lasts.
 
 With the GPU, the processor still decodes the webcam's video, composes the blur and
-converts formats: that is most of what remains. At 30 fps, *Low* costs about the same
-either way; the GPU makes the difference at higher qualities and frame rates.
+converts formats: that is most of what remains, and it grows with the resolution. At
+30 fps, *Low* costs about the same either way; the GPU makes the difference at higher
+qualities and frame rates.
 
 ### Configuration file
 

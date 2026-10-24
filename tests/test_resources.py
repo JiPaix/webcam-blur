@@ -42,3 +42,26 @@ def test_text_is_localised():
     i18n.setup("fr")
     assert resources_text(usage) == "CPU 4,2 % · RAM 412 Mo · VRAM 1,4 Go"
     assert resources_text({**usage, "vram": None, "cpu": 23.0}) == "CPU 23 % · RAM 412 Mo"
+
+
+def test_vram_counts_each_gpu_client_once(monkeypatch, tmp_path):
+    """amdgpu reports the same memory as drm-total-vram and drm-memory-vram."""
+    import os
+
+    from webcam_blur import resources
+    fdinfo = {"6": "drm-client-id:\t7\ndrm-total-vram:\t226880 KiB\ndrm-resident-vram:\t226880 KiB\n"
+                   "drm-memory-vram:\t226880 KiB\n",
+              "7": "drm-client-id:\t7\ndrm-total-vram:\t226880 KiB\n",  # same client, another fd
+              "8": "pos:\t0\n"}  # not a GPU
+    real_listdir, real_open = os.listdir, open
+    monkeypatch.setattr(resources.os, "listdir", lambda p: list(fdinfo) if p.endswith("/fdinfo") else real_listdir(p))
+
+    class Fake:
+        def __init__(self, text): self.text = text
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def read(self): return self.text
+
+    monkeypatch.setattr("builtins.open", lambda p, *a, **k: Fake(fdinfo[p.rsplit("/", 1)[1]])
+                        if "/fdinfo/" in str(p) else real_open(p, *a, **k))
+    assert resources._vram(1234, set()) == 226880 * 1024

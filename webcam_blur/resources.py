@@ -3,8 +3,10 @@
 import os
 import time
 
-# GPU memory per process, from the DRM driver's fdinfo (amdgpu, i915/xe, nouveau…), in KiB.
-VRAM_KEYS = ("drm-memory-vram:", "drm-total-vram", "drm-total-local")
+# GPU memory per process, from the DRM driver's fdinfo, in KiB. Drivers report the same
+# memory under several names (amdgpu: both drm-total-vram and the older drm-memory-vram):
+# the first one found counts, in this order.
+VRAM_KEYS = ("drm-total-vram", "drm-memory-vram", "drm-total-local")
 CLOCK_TICKS = os.sysconf("SC_CLK_TCK")
 
 
@@ -63,10 +65,16 @@ def _vram(pid, seen):
         if client is None or client in seen:
             continue
         seen.add(client)
+        values = {}
         for line in lines:
-            if line.startswith(VRAM_KEYS):
-                value = line.split(":", 1)[1].split()
-                total = (total or 0) + int(value[0]) * (1024 if value[1:] == ["KiB"] else 1)
+            key, _, value = line.partition(":")
+            if key.split("0")[0] in VRAM_KEYS and value.split():  # drm-total-local0 -> drm-total-local
+                values.setdefault(key.split("0")[0], value.split())
+        for key in VRAM_KEYS:
+            if key in values:
+                amount, *unit = values[key]
+                total = (total or 0) + int(amount) * (1024 if unit == ["KiB"] else 1)
+                break
     return total
 
 

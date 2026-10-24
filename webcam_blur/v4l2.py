@@ -445,14 +445,20 @@ def set_control(path, ctrl_id, value):
 
 def apply_controls(path, saved):
     """Set the saved values ({key: value}) on the webcam. On/off and menu controls go first:
-    they switch automatic modes, and a manual value is refused while its automatic mode is on.
+    they switch automatic modes. Manual values that their automatic mode then makes inactive
+    (e.g. an exposure time saved before exposure went back to automatic) are skipped.
     Returns the keys that could not be set."""
     controls = {c.key: c for c in list_controls(path)}
-    order = sorted((k for k in saved if k in controls), key=lambda k: controls[k].type == CTRL_INTEGER)
     failed = [k for k in saved if k not in controls]
-    for key in order:
-        try:
-            set_control(path, controls[key].id, int(saved[key]))
-        except OSError:
-            failed.append(key)
+    for integers in (False, True):
+        if integers:
+            controls = {c.key: c for c in list_controls(path)}  # flags after the mode switches
+        for key in saved:
+            c = controls.get(key)
+            if c is None or (c.type == CTRL_INTEGER) != integers or (integers and c.inactive):
+                continue
+            try:
+                set_control(path, c.id, int(saved[key]))
+            except OSError:
+                failed.append(key)
     return failed
