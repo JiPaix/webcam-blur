@@ -1,6 +1,6 @@
 # Maintainer: JiPaix <https://github.com/JiPaix>
 pkgname=webcam-blur
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="Background blur for any webcam, as virtual cameras usable in every app (tray toggle, GPU accelerated)"
 arch=('any')
