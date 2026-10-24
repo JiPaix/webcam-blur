@@ -14,7 +14,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QAction, QActionGroup, QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import i18n, matting
+from . import i18n, matting, v4l2
 from .config import STRENGTHS, Config
 from .i18n import tr
 from .manager import Manager
@@ -60,7 +60,8 @@ class Tray:
         self.menu = QMenu()
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self.on_activated)
-        self.camera_set = None
+        self.layout = None
+        self.cameras = []
         manager.changed.connect(self.refresh)
         self.timer = QTimer(interval=3000, timeout=self.refresh)
         self.timer.start()
@@ -70,18 +71,32 @@ class Tray:
             self.tray.showMessage(tr("app.name"), manager.error, QSystemTrayIcon.MessageIcon.Warning)
 
     def build_menu(self):
-        """(Re)build the menu; needed whenever the set of webcams changes."""
+        """(Re)build the menu; needed whenever the webcams or their mode lists change."""
         m = self.menu
         m.clear()
-        self.camera_actions = []
+        self.cameras = []  # (worker, submenu, blur action, {mode key or None: action}, pending note)
         for key, worker in sorted(self.manager.workers.items(), key=lambda kv: kv[1].camera.name):
-            act = QAction(m, checkable=True)
-            act.toggled.connect(lambda on, k=key: self.set_camera(k, "blur", on))
-            m.addAction(act)
-            self.camera_actions.append((act, worker))
+            sub = m.addMenu(worker.camera.name)
+            blur = sub.addAction(tr("menu.blur"))
+            blur.setCheckable(True)
+            blur.toggled.connect(lambda on, k=key: self.set_camera(k, "blur", on))
+            res = sub.addMenu(tr("menu.resolution"))
+            group = QActionGroup(res)
+            choices = {}
+            for mode in [None] + v4l2.menu_modes(worker.modes):
+                act = res.addAction("")
+                act.setCheckable(True)
+                act.triggered.connect(lambda _=False, k=key, md=mode: self.set_camera(
+                    k, "mode", md.to_config() if md else None))
+                group.addAction(act)
+                choices[mode.key() if mode else None] = act
+                if mode is None:
+                    res.addSeparator()
+            pending = sub.addAction(tr("menu.resolution_pending"))
+            pending.setEnabled(False)
+            self.cameras.append((worker, sub, blur, choices, pending))
         if not self.manager.workers:
-            act = m.addAction(self.manager.error or tr("menu.no_cameras"))
-            act.setEnabled(False)
+            m.addAction(self.manager.error or tr("menu.no_cameras")).setEnabled(False)
         m.addSeparator()
 
         sub = m.addMenu(tr("menu.strength"))
@@ -109,25 +124,26 @@ class Tray:
         act.toggled.connect(set_autostart)
         m.addAction(tr("menu.quit"), self.app.quit)
 
-    def set_camera(self, key, setting, on):
-        self.config.camera(key)[setting] = on
+    def set_camera(self, key, setting, value):
+        self.config.camera(key)[setting] = value
         self.config.save()
         self.refresh()
 
     def on_activated(self, reason):
         # Left click: blur on/off for all cameras at once.
-        if reason == QSystemTrayIcon.ActivationReason.Trigger and self.camera_actions:
-            any_on = any(w.settings["blur"] for _a, w in self.camera_actions)
-            for act, _w in self.camera_actions:
-                act.setChecked(not any_on)
+        if reason == QSystemTrayIcon.ActivationReason.Trigger and self.cameras:
+            any_on = any(w.settings["blur"] for w, *_ in self.cameras)
+            for _w, _sub, blur, _choices, _pending in self.cameras:
+                blur.setChecked(not any_on)
 
     def refresh(self):
-        camera_set = (tuple(sorted(self.manager.workers)), matting.gpu_support.state)
-        if camera_set != self.camera_set:
-            self.camera_set = camera_set
+        layout = (tuple((k, len(w.modes)) for k, w in sorted(self.manager.workers.items())),
+                  matting.gpu_support.state)
+        if layout != self.layout:
+            self.layout = layout
             self.build_menu()
         lines = []
-        for act, w in self.camera_actions:
+        for w, sub, blur, choices, pending in self.cameras:
             on = w.settings["blur"]
             if w.error:
                 status = tr("status.error", error=tr(w.error))
@@ -135,18 +151,30 @@ class Tray:
                 status = tr("status.in_use", engine=engine_text(w.engine))
             else:
                 status = tr("status.idle")
-            act.blockSignals(True)
-            act.setChecked(on)
-            act.blockSignals(False)
-            act.setText(tr("menu.camera", name=w.camera.name, status=status))
-            lines.append(tr("tooltip.camera", name=w.camera.name,
-                            state=tr("tooltip.on" if on else "tooltip.off"), status=status))
+            state = tr("tooltip.on" if on else "tooltip.off")
+            sub.setTitle(tr("menu.camera", name=w.camera.name, state=state, status=status))
+            blur.blockSignals(True)
+            blur.setChecked(on)
+            blur.blockSignals(False)
+            if w.modes:
+                chosen = v4l2.find_mode(w.modes, w.settings.get("mode"))
+                choices[None].setText(tr("menu.resolution_auto", mode=mode_text(v4l2.auto_mode(w.modes))))
+                for mode in v4l2.menu_modes(w.modes):
+                    choices[mode.key()].setText(mode_text(mode))
+                selected = choices.get(chosen.key()) if chosen else None
+                (selected or choices[None]).setChecked(True)
+            pending.setVisible(w.mode_pending)
+            lines.append(tr("tooltip.camera", name=w.camera.name, state=state, status=status))
         if not lines:
             lines.append(self.manager.error or tr("menu.no_cameras"))
-        any_on = any(w.settings["blur"] for _a, w in self.camera_actions)
-        live = any(w.in_use for _a, w in self.camera_actions)
+        any_on = any(w.settings["blur"] for w, *_ in self.cameras)
+        live = any(w.in_use for w, *_ in self.cameras)
         self.tray.setIcon(self.icons[(any_on, live)])
         self.tray.setToolTip(tr("app.tooltip_title") + "\n" + "\n".join(lines))
+
+
+def mode_text(mode):
+    return tr("mode.label", width=mode.width, height=mode.height, fps=f"{mode.fps:g}")
 
 
 def launch_command():

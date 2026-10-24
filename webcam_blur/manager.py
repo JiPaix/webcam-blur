@@ -70,10 +70,10 @@ class Manager(QObject):
         if cam.key in self.skipped:
             return
         try:
-            modes = v4l2.capture_modes(cam.path)
+            modes = v4l2.list_modes(cam.path)
         except OSError:
             return  # not ready yet; next sync retries
-        if not any(modes.values()):
+        if not modes:
             self.skipped.add(cam.key)  # e.g. infrared face-login cameras (greyscale only)
             return
         try:

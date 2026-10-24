@@ -6,8 +6,10 @@ Background blur for any webcam on Linux, usable in **every** app (Discord, Zoom,
 Teams, Meet, OBS, browsers…).
 
 For each webcam you plug in, Webcam Blur creates a virtual camera named
-`<your webcam> (blur)`. Pick it in your app instead of the real webcam. A tray icon
-turns the blur on and off per camera and sets its strength.
+`<your webcam> (blur)`. Pick it in your app instead of the real webcam. In the tray
+icon's menu, each webcam has a **Blur** switch and a **Resolution** list, which shows
+every resolution and frame rate it supports, e.g. 1080p · 30 fps or 720p · 60 fps.
+Blur strength is set for all cameras at once.
 
 - **Automatic:** webcams are detected when plugged in. Their virtual cameras appear and
   disappear with them.
@@ -90,7 +92,7 @@ v4l2loopback module (≥ 0.13).
 
 ## Configuration
 
-Most settings are in the tray menu. They are stored in
+Everything is in the tray menu. Settings are stored in
 `~/.config/webcam-blur/config.json`:
 
 | Key | Meaning |
@@ -100,9 +102,24 @@ Most settings are in the tray menu. They are stored in
 | `language` | e.g. `"fr"`; `null` follows the system locale |
 | `cameras.<id>.blur` | blur on/off for this camera |
 | `cameras.<id>.virtual` | `false` to never create a virtual camera for this webcam (greyscale-only devices such as IR face-login cameras are skipped automatically) |
-| `cameras.<id>.width` / `height` / `fps` | force a capture mode (default: 1280x720 if available) |
+| `cameras.<id>.mode` | resolution chosen in the menu (`{"width", "height", "fps"}`), `null` = automatic |
+
+**Automatic resolution:** 1280×720 at 30 fps if the webcam offers it; otherwise the next
+size up that reaches 30 fps (e.g. 1080p30). Calling apps rarely send more, and every
+extra pixel costs processing. A resolution chosen in the menu takes effect once no
+app is using the camera.
+
+**Picture settings** (brightness, exposure, white balance, focus, zoom…) are stored on
+the webcam itself. Set them on the real webcam with a tool like
+[cameractrls](https://github.com/soyersoyer/cameractrls) or `guvcview`. They show up
+in the virtual camera right away, even mid-call.
 
 ## Limitations
+
+- **Apps can't negotiate the format.** A v4l2loopback virtual camera offers one format,
+  the one picked in the menu. Apps can't choose another resolution from their own
+  settings, and controls changed through the virtual camera are not passed on to the
+  real webcam.
 
 - **Edges are not perfect.** Hair, fast hand movements and objects with the same
   colour as the background (e.g. a white headset in front of a white wall) can be

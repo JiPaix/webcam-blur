@@ -1,28 +1,28 @@
 {
   "_language": "English",
   "_translators": [],
-
   "app.name": "Webcam Blur",
   "app.tooltip_title": "Webcam Blur",
   "virtual_camera.label": "{name} (blur)",
-
-  "menu.camera": "Blur {name}  ({status})",
+  "menu.camera": "{name}  —  blur {state} · {status}",
+  "menu.blur": "Blur",
+  "menu.resolution": "Resolution",
+  "menu.resolution_auto": "Automatic ({mode})",
+  "menu.resolution_pending": "New resolution applies once no app uses the camera",
   "menu.no_cameras": "No webcam detected",
   "menu.strength": "Blur strength",
   "menu.use_gpu": "Use GPU",
   "menu.use_gpu_needs_onnx": "Use GPU (install python-onnx)",
   "menu.autostart": "Start at login",
   "menu.quit": "Quit",
-
   "strength.light": "Light",
   "strength.medium": "Medium",
   "strength.strong": "Strong",
-
+  "mode.label": "{width} × {height} · {fps} fps",
   "status.idle": "idle",
   "status.in_use": "in use, {engine}",
   "status.error": "unavailable: {error}",
   "status.disabled": "disabled",
-
   "engine.gpu": "GPU",
   "engine.cpu": "CPU",
   "engine.gpu_starting": "CPU, GPU starting…",
@@ -31,11 +31,9 @@
   "engine.gpu_error": "CPU, GPU error: {error}",
   "engine.no_gpu": "CPU, no supported GPU",
   "engine.no_onnx": "CPU, install python-onnx for GPU",
-
   "tooltip.camera": "{name}: blur {state}, {status}",
   "tooltip.on": "on",
   "tooltip.off": "off",
-
   "error.no_control": "Cannot create virtual cameras ({error}). Is the v4l2loopback module loaded and the udev rule installed?",
   "error.open_camera": "cannot open the webcam (used by another app?)",
   "error.read_camera": "the webcam stopped sending images"

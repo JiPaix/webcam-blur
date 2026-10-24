@@ -43,3 +43,11 @@ def test_migrates_pre_release_format(tmp_path):
     assert "mode" not in cfg.data and "green" not in cfg.data
     assert cfg.camera("usb-046d_C922-video-index0")["blur"] is False
     assert cfg.camera("usb-046d_C920-video-index0")["blur"] is True
+
+
+def test_migrates_capture_mode_overrides(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"cameras": {"cam": {"blur": True, "width": 1920, "height": 1080, "fps": 60}}}))
+    cam = Config(path).camera("cam")
+    assert cam["mode"] == {"width": 1920, "height": 1080, "fps": 60}
+    assert "width" not in cam

@@ -28,21 +28,47 @@ def test_v4l2_abi():
     assert v4l2.VIDIOC_S_FMT == _ioc(IOWR, "V", 5, 208)
     assert v4l2.VIDIOC_ENUM_FMT == _ioc(IOWR, "V", 2, 64)
     assert v4l2.VIDIOC_ENUM_FRAMESIZES == _ioc(IOWR, "V", 74, 44)
+    assert v4l2.VIDIOC_ENUM_FRAMEINTERVALS == _ioc(IOWR, "V", 75, 52)
+    assert v4l2.VIDIOC_S_PARM == _ioc(IOWR, "V", 22, 204)
 
 
-def test_pick_mode_prefers_720p_mjpg():
-    modes = {"YUYV": [(640, 480), (1280, 720)], "MJPG": [(640, 480), (1280, 720), (1920, 1080)]}
-    assert v4l2.pick_mode(modes) == ("MJPG", 1280, 720)
+def modes_of(*specs):
+    return v4l2.sort_modes(v4l2.Mode(w, h, fps, fmt) for w, h, fps, fmt in specs)
 
 
-def test_pick_mode_falls_back_to_largest_within_limit():
-    modes = {"MJPG": [(320, 240), (640, 480), (1920, 1080)]}
-    assert v4l2.pick_mode(modes) == ("MJPG", 640, 480)
-    assert v4l2.pick_mode({"YUYV": [(640, 360), (800, 600)]}) == ("YUYV", 800, 600)
+C922_LIKE = modes_of((1920, 1080, 30, "MJPG"), (1920, 1080, 15, "MJPG"), (1280, 720, 60, "MJPG"),
+                     (1280, 720, 30, "MJPG"), (1280, 720, 10, "YUYV"), (640, 480, 30, "MJPG"),
+                     (2304, 1536, 2, "YUYV"), (160, 90, 30, "MJPG"))
 
 
-def test_pick_mode_without_known_formats():
-    assert v4l2.pick_mode({}) == ("MJPG", 640, 480)
+def test_auto_mode_prefers_720p_at_30fps():
+    assert v4l2.auto_mode(C922_LIKE) == v4l2.Mode(1280, 720, 30, "MJPG")
+
+
+def test_auto_mode_for_a_4k20_1080p60_camera():
+    cam = modes_of((3840, 2160, 20, "MJPG"), (1920, 1080, 60, "MJPG"), (1920, 1080, 30, "MJPG"),
+                   (640, 480, 30, "YUYV"))
+    assert v4l2.auto_mode(cam) == v4l2.Mode(1920, 1080, 30, "MJPG")  # no 720p: next size up, at 30 fps
+
+
+def test_auto_mode_falls_back_to_fastest_rate():
+    slow = modes_of((800, 600, 15, "YUYV"), (640, 480, 20, "YUYV"))
+    assert v4l2.auto_mode(slow) == v4l2.Mode(800, 600, 15, "YUYV")  # nothing reaches 30 fps: largest size
+    assert v4l2.auto_mode([]) == v4l2.Mode(640, 480, 30.0)
+
+
+def test_menu_modes_keeps_useful_combinations():
+    keys = [m.key() for m in v4l2.menu_modes(C922_LIKE)]
+    assert keys == [(1920, 1080, 30), (1280, 720, 60), (1280, 720, 30), (640, 480, 30)]
+    cam = modes_of((3840, 2160, 20, "MJPG"), (1920, 1080, 60, "MJPG"), (1920, 1080, 30, "MJPG"),
+                   (1920, 1080, 24, "MJPG"))
+    assert [m.key() for m in v4l2.menu_modes(cam)] == [(3840, 2160, 20), (1920, 1080, 60), (1920, 1080, 30)]
+
+
+def test_find_mode_matches_saved_choice():
+    assert v4l2.find_mode(C922_LIKE, {"width": 1280, "height": 720, "fps": 60}) == v4l2.Mode(1280, 720, 60, "MJPG")
+    assert v4l2.find_mode(C922_LIKE, {"width": 1280, "height": 720, "fps": 50}) is None  # not offered: automatic
+    assert v4l2.find_mode(C922_LIKE, None) is None
 
 
 class FakeIoctl:

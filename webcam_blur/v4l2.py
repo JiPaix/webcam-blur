@@ -5,6 +5,7 @@ import fcntl
 import os
 import struct
 import time
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -107,7 +108,8 @@ def _wait_node(path, timeout=5.0):
 
 # --- Loopback output ----------------------------------------------------------
 
-VIDIOC_S_FMT = 0xC0D05605  # _IOWR('V', 5, struct v4l2_format), sizeof == 208
+VIDIOC_S_FMT = 0xC0D05605   # _IOWR('V', 5, struct v4l2_format), sizeof == 208
+VIDIOC_S_PARM = 0xC0CC5616  # _IOWR('V', 22, struct v4l2_streamparm), sizeof == 204
 V4L2_BUF_TYPE_VIDEO_OUTPUT = 2
 V4L2_FIELD_NONE = 1
 V4L2_COLORSPACE_SRGB = 8
@@ -129,6 +131,16 @@ class LoopbackOutput:
         fmt += b"\0" * (208 - len(fmt))
         fcntl.ioctl(self.fd, VIDIOC_S_FMT, fmt)
         self.black = self.convert(np.zeros((height, width, 3), np.uint8))
+
+    def set_fps(self, fps):
+        """Advertise the frame rate to apps (best effort: older drivers may refuse)."""
+        den = round(fps * 1000)
+        parm = struct.pack("<IIIIIII4I", V4L2_BUF_TYPE_VIDEO_OUTPUT, 0, 0, 1000, den, 0, 0, 0, 0, 0, 0)
+        parm += b"\0" * (204 - len(parm))
+        try:
+            fcntl.ioctl(self.fd, VIDIOC_S_PARM, parm)
+        except OSError:
+            pass
 
     def convert(self, bgr):
         if _YUYV_CODE is not None:
@@ -167,69 +179,154 @@ def readers_of(path):
     return count
 
 
-# --- Webcam formats (queried without streaming, so the LED stays off) ---------
+# --- Webcam modes (queried without streaming, so the LED stays off) -----------
 
-VIDIOC_ENUM_FMT = 0xC0405602         # _IOWR('V', 2, struct v4l2_fmtdesc), 64 bytes
-VIDIOC_ENUM_FRAMESIZES = 0xC02C564A  # _IOWR('V', 74, struct v4l2_frmsizeenum), 44 bytes
+VIDIOC_ENUM_FMT = 0xC0405602             # _IOWR('V', 2, struct v4l2_fmtdesc), 64 bytes
+VIDIOC_ENUM_FRAMESIZES = 0xC02C564A      # _IOWR('V', 74, struct v4l2_frmsizeenum), 44 bytes
+VIDIOC_ENUM_FRAMEINTERVALS = 0xC034564B  # _IOWR('V', 75, struct v4l2_frmivalenum), 52 bytes
 V4L2_BUF_TYPE_VIDEO_CAPTURE = 1
 V4L2_FRMSIZE_TYPE_DISCRETE = 1
+V4L2_FRMIVAL_TYPE_DISCRETE = 1
+FORMATS = ("MJPG", "YUYV")  # in order of preference: raw YUYV rarely reaches 30 fps at 720p over USB 2
 
 
-def capture_modes(path, wanted=(1280, 720)):
-    """{fourcc: [(w, h), …]} of frame sizes, for MJPG and YUYV.
+@dataclass(frozen=True)
+class Mode:
+    width: int
+    height: int
+    fps: float
+    fourcc: str = "MJPG"
 
-    Devices that report a size range (stepwise/continuous) get ``wanted`` if it fits,
-    plus their largest size.
+    def key(self):
+        """Identity of the mode as the user sees it (the pixel format is an implementation detail)."""
+        return self.width, self.height, round(self.fps, 2)
+
+    def to_config(self):
+        return {"width": self.width, "height": self.height, "fps": round(self.fps, 2)}
+
+
+def _ioctl_iter(fd, request, make, limit=256):
+    for i in range(limit):
+        buf = bytearray(make(i))
+        try:
+            fcntl.ioctl(fd, request, buf, True)
+        except OSError:
+            return
+        yield buf
+
+
+def _sizes(fd, pixfmt, wanted=(1280, 720)):
+    sizes = []
+    for buf in _ioctl_iter(fd, VIDIOC_ENUM_FRAMESIZES, lambda i: struct.pack("<III32x", i, pixfmt, 0)):
+        ftype, w, h = struct.unpack_from("<III", buf, 8)
+        if ftype == V4L2_FRMSIZE_TYPE_DISCRETE:
+            sizes.append((w, h))
+            continue
+        # Size range (stepwise/continuous): offer the usual size if it fits, and the largest.
+        min_w, max_w, step_w, min_h, max_h, step_h = struct.unpack_from("<6I", buf, 12)
+        ww, wh = wanted
+        if min_w <= ww <= max_w and min_h <= wh <= max_h \
+                and (ww - min_w) % max(step_w, 1) == 0 and (wh - min_h) % max(step_h, 1) == 0:
+            sizes.append(wanted)
+        sizes.append((max_w, max_h))
+        break
+    return sizes
+
+
+def _rates(fd, pixfmt, w, h):
+    rates = []
+    for buf in _ioctl_iter(fd, VIDIOC_ENUM_FRAMEINTERVALS, lambda i: struct.pack("<IIII36x", i, pixfmt, w, h)):
+        ftype, num, den = struct.unpack_from("<III", buf, 16)
+        if ftype == V4L2_FRMIVAL_TYPE_DISCRETE:
+            if num and den:
+                rates.append(den / num)
+            continue
+        # Interval range: offer the fastest rate, and 30 fps if it is within the range.
+        min_n, min_d, max_n, max_d = struct.unpack_from("<4I", buf, 20)
+        fastest, slowest = (min_d / min_n if min_n else 30.0), (max_d / max_n if max_n else 1.0)
+        rates.append(fastest)
+        if slowest <= 30.0 < fastest:
+            rates.append(30.0)
+        break
+    return rates or [30.0]  # some drivers do not report intervals
+
+
+def list_modes(path):
+    """Every resolution x frame rate the webcam offers in MJPG or YUYV, best first.
+
+    When both formats offer the same resolution and rate, MJPG is kept.
     """
-    modes = {}
+    found = {}
     fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
     try:
-        for i in range(64):
-            buf = bytearray(struct.pack("<III32sII12x", i, V4L2_BUF_TYPE_VIDEO_CAPTURE, 0, b"", 0, 0))
-            try:
-                fcntl.ioctl(fd, VIDIOC_ENUM_FMT, buf, True)
-            except OSError:
-                break
+        formats = {}
+        for buf in _ioctl_iter(fd, VIDIOC_ENUM_FMT,
+                               lambda i: struct.pack("<III32sII12x", i, V4L2_BUF_TYPE_VIDEO_CAPTURE, 0, b"", 0, 0),
+                               limit=64):
             pixfmt = struct.unpack_from("<I", buf, 44)[0]
-            name = struct.pack("<I", pixfmt).decode(errors="replace")
-            if name not in ("MJPG", "YUYV"):
+            formats[struct.pack("<I", pixfmt).decode(errors="replace")] = pixfmt
+        for name in FORMATS:
+            if name not in formats:
                 continue
-            sizes = []
-            for j in range(256):
-                fbuf = bytearray(struct.pack("<III32x", j, pixfmt, 0))
-                try:
-                    fcntl.ioctl(fd, VIDIOC_ENUM_FRAMESIZES, fbuf, True)
-                except OSError:
-                    break
-                ftype, w, h = struct.unpack_from("<III", fbuf, 8)
-                if ftype == V4L2_FRMSIZE_TYPE_DISCRETE:
-                    sizes.append((w, h))
-                    continue
-                min_w, max_w, step_w, min_h, max_h, step_h = struct.unpack_from("<6I", fbuf, 12)
-                ww, wh = wanted
-                if min_w <= ww <= max_w and min_h <= wh <= max_h \
-                        and (ww - min_w) % max(step_w, 1) == 0 and (wh - min_h) % max(step_h, 1) == 0:
-                    sizes.append(wanted)
-                sizes.append((max_w, max_h))
-                break
-            modes[name] = sizes
+            for w, h in _sizes(fd, formats[name]):
+                for fps in _rates(fd, formats[name], w, h):
+                    mode = Mode(w, h, fps, name)
+                    found.setdefault(mode.key(), mode)
     finally:
         os.close(fd)
-    return modes
+    return sort_modes(found.values())
 
 
-def pick_mode(modes, preferred=(1280, 720), max_width=1280):
-    """Choose (fourcc, w, h): 1280x720 if offered, else the largest size up to 1280 wide.
+def sort_modes(modes):
+    return sorted(modes, key=lambda m: (m.width * m.height, m.fps), reverse=True)
 
-    MJPG is preferred: at 720p, raw YUYV usually cannot reach 30 fps over USB 2.
+
+def auto_mode(modes, preferred=(1280, 720)):
+    """Default mode: 1280x720 at 30 fps if offered; otherwise the smallest size at least as
+    wide that reaches 30 fps (e.g. 1080p30), or else the largest one below it.
+
+    Video-call apps send 720p at most in practice, and every extra pixel costs processing.
     """
-    for fmt in ("MJPG", "YUYV"):
-        sizes = modes.get(fmt) or []
-        if preferred in sizes:
-            return fmt, *preferred
-    for fmt in ("MJPG", "YUYV"):
-        sizes = [s for s in modes.get(fmt) or [] if s[0] <= max_width]
-        if sizes:
-            w, h = max(sizes, key=lambda s: s[0] * s[1])
-            return fmt, w, h
-    return "MJPG", 640, 480
+    if not modes:
+        return Mode(640, 480, 30.0)
+
+    def best_rate(candidates):
+        fast = [m for m in candidates if m.fps >= 29.5]
+        if fast:  # 30 fps rather than 60: calling apps send 30, and it halves the work
+            return min(fast, key=lambda m: (m.fps, FORMATS.index(m.fourcc)))
+        return max(candidates, key=lambda m: m.fps)
+
+    pool = [m for m in modes if m.fps >= 29.5] or modes
+    sizes = {(m.width, m.height) for m in pool}
+    if preferred in sizes:
+        size = preferred
+    else:
+        larger = [sz for sz in sizes if sz[0] >= preferred[0]]
+        size = min(larger, key=lambda sz: sz[0] * sz[1]) if larger else max(sizes, key=lambda sz: sz[0] * sz[1])
+    return best_rate([m for m in modes if (m.width, m.height) == size])
+
+
+def find_mode(modes, wanted):
+    """The listed mode matching a saved ``{"width", "height", "fps"}`` choice, or None."""
+    if not wanted:
+        return None
+    key = (wanted.get("width"), wanted.get("height"), round(float(wanted.get("fps", 0)), 2))
+    return next((m for m in modes if m.key() == key), None)
+
+
+def menu_modes(modes, min_fps=15.0, min_width=320):
+    """The modes worth offering in a menu: for each size, its fastest rate plus 60 and
+    30 fps when available. Sizes that cannot reach ``min_fps`` or narrower than
+    ``min_width`` are left out (unless that would leave nothing)."""
+    by_size = {}
+    for m in modes:
+        by_size.setdefault((m.width, m.height), []).append(m)
+    keep = []
+    for (w, _h), size_modes in by_size.items():
+        fastest = max(size_modes, key=lambda m: m.fps)
+        if fastest.fps < min_fps or w < min_width:
+            continue
+        for m in size_modes:
+            if m is fastest or round(m.fps) in (30, 60):
+                keep.append(m)
+    return sort_modes(keep or modes)

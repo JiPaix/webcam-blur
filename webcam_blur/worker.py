@@ -37,6 +37,8 @@ class CameraWorker(threading.Thread):
         self.settings = config.camera(camera.key)
         self.on_change = on_change
         self.cpu = matting.CpuMatter(matting.CpuMatter.create_session())
+        self.modes = []    # every mode the webcam offers (v4l2.Mode), best first
+        self.mode = None   # mode the virtual camera currently has
         self.in_use = False
         self.engine = ""   # gpu | cpu | gpu_starting | gpu_preparing | gpu_compiling | gpu_error:… | no_gpu | no_onnx
         self.error = None  # translation key or message
@@ -62,25 +64,34 @@ class CameraWorker(threading.Thread):
                     print(f"[{self.camera.name}] {e}", file=sys.stderr, flush=True)
                 self.stop_evt.wait(5)
 
-    def capture_mode(self):
-        s = self.settings
-        if "width" in s and "height" in s:
-            return "MJPG", s["width"], s["height"]
-        return v4l2.pick_mode(v4l2.capture_modes(self.camera.path))
+    def wanted_mode(self):
+        """The mode chosen in the menu if the webcam offers it, else the automatic one."""
+        return v4l2.find_mode(self.modes, self.settings.get("mode")) or v4l2.auto_mode(self.modes)
+
+    @property
+    def mode_pending(self):
+        """A new mode was chosen while an app reads the camera: it applies once the app is gone."""
+        return self.mode is not None and self.mode != self.wanted_mode()
 
     def loop(self):
-        fmt, w, h = self.capture_mode()
-        out = v4l2.LoopbackOutput(self.output_path, w, h)
+        if not self.modes:
+            self.modes = v4l2.list_modes(self.camera.path)
+            self.on_change()
+        mode = self.wanted_mode()
+        # The format can only change while no app reads the virtual camera.
+        out = v4l2.LoopbackOutput(self.output_path, mode.width, mode.height)
+        out.set_fps(mode.fps)
+        self.mode = mode
         if self.error:
             self.error = None
-            self.on_change()
+        self.on_change()
         try:
-            while not self.stop_evt.is_set():
+            while not self.stop_evt.is_set() and self.wanted_mode() == mode:
                 if v4l2.readers_of(self.output_path) == 0:
                     out.write_black()
                     self.stop_evt.wait(1.0)
                     continue
-                self.stream(out, fmt, w, h)
+                self.stream(out, mode)
         finally:
             out.close()
 
@@ -93,16 +104,17 @@ class CameraWorker(threading.Thread):
             return False, {"no_onnx": "no_onnx"}.get(state, "no_gpu")
         return True, None
 
-    def stream(self, out, fmt, w, h):
+    def stream(self, out, mode):
+        w, h = mode.width, mode.height
         cap = cv2.VideoCapture(self.camera.path, cv2.CAP_V4L2)
         gpu = None
         try:
             if not cap.isOpened():
                 raise CameraError("error.open_camera")
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fmt))
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*mode.fourcc))
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-            cap.set(cv2.CAP_PROP_FPS, self.settings.get("fps", 30))
+            cap.set(cv2.CAP_PROP_FPS, mode.fps)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.cpu.reset()
             self.in_use = True

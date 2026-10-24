@@ -163,8 +163,9 @@ def test_control_device_add_query_remove(control):
 
 
 def test_fake_webcam_reports_its_mode(webcam):
-    modes = v4l2.capture_modes(webcam.path)
-    assert v4l2.pick_mode(modes) == ("YUYV", 1280, 720)
+    modes = v4l2.list_modes(webcam.path)
+    assert v4l2.auto_mode(modes).key()[:2] == (1280, 720)
+    assert all(m.fourcc == "YUYV" for m in modes)
 
 
 def test_hotplug_monitor_sees_new_devices(control):
@@ -234,6 +235,37 @@ def test_blur_off_passes_the_image_through(pipeline, tmp_path):
     for name in PERSON:
         assert mean_abs_diff(out, FRAME, name) < 10
     assert wait_for(lambda: not worker_of(pipeline).in_use, IDLE_GRACE + 5)
+
+
+def test_resolution_choice(pipeline, tmp_path):
+    """A mode picked in the menu reconfigures the virtual camera, but never under a reading app."""
+    worker = worker_of(pipeline)
+    settings = pipeline.config.camera(pipeline.cam.key)
+    auto = worker.mode
+    small = v4l2.Mode(640, 360, 30.0, "YUYV")
+    # The fake webcam only produces 1280x720; frames are scaled to the chosen size.
+    worker.modes = v4l2.sort_modes(worker.modes + [small])
+    try:
+        settings["mode"] = small.to_config()
+        assert wait_for(lambda: worker.mode == small, 5), "idle virtual camera should switch right away"
+        _, out = consume(worker.output_path, 3, tmp_path)
+        assert out.shape == (360, 640, 3)
+
+        # While an app reads, the change waits and the menu says so.
+        out_path = tmp_path / "pending.npy"
+        proc = start_consumer(worker.output_path, 5, out_path)
+        assert wait_for(lambda: worker.in_use, 5)
+        settings["mode"] = None
+        time.sleep(1.5)
+        assert worker.mode == small and worker.mode_pending
+        _, out = finish_consumer(proc, out_path)
+        assert out.shape == (360, 640, 3), "the reading app must keep its format"
+        assert wait_for(lambda: worker.mode == auto, IDLE_GRACE + 5), "switch once the app is gone"
+        assert not worker.mode_pending
+    finally:
+        settings["mode"] = None
+        worker.modes = [m for m in worker.modes if m != small]
+    assert wait_for(lambda: worker.mode == auto, IDLE_GRACE + 5)
 
 
 def test_gpu_path_in_live_pipeline(pipeline, tmp_path, monkeypatch):

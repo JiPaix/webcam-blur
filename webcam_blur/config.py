@@ -15,9 +15,9 @@ DEFAULTS = {
     "cameras": {},      # per-camera settings, keyed by Camera.key
 }
 
-# Per camera: "blur" (effect on/off), "virtual" (create its virtual camera), and
-# optionally "width"/"height"/"fps" to override the automatic capture mode.
-CAMERA_DEFAULTS = {"blur": True, "virtual": True}
+# Per camera: "blur" (effect on/off), "virtual" (create its virtual camera) and
+# "mode" ({"width", "height", "fps"} chosen in the menu, or None for automatic).
+CAMERA_DEFAULTS = {"blur": True, "virtual": True, "mode": None}
 
 
 def _migrate(data):
@@ -30,6 +30,9 @@ def _migrate(data):
         data["strength"] = old_strengths[data["strength"]]
     for key in ("mode", "quality", "green"):
         data.pop(key, None)
+    for cam in data.get("cameras", {}).values():  # 0.1.0: width/height/fps overrides
+        if "width" in cam and "height" in cam:
+            cam["mode"] = {"width": cam.pop("width"), "height": cam.pop("height"), "fps": cam.pop("fps", 30)}
     return data
 
 
