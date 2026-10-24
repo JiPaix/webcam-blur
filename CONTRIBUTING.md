@@ -37,3 +37,16 @@ the suffix.
 - `webcam_blur/cameras.py`: webcam detection and hotplug (udev).
 
 Run from a checkout with `python -m webcam_blur` (see the README for the system files).
+
+## Tests
+
+```sh
+pip install pytest   # plus the app's dependencies
+python -m pytest -m "not v4l2"   # no kernel module needed
+python -m pytest -m v4l2         # end-to-end: needs v4l2loopback >= 0.13 and access to /dev/v4l2loopback
+```
+
+The end-to-end tests feed a fake webcam (a loopback device playing a test portrait) to
+the real app logic and check the virtual camera it produces. They create and remove
+their own loopback devices and leave your real webcams alone. CI runs everything,
+against v4l2loopback 0.13 and 0.15. It also builds and tests the Arch package.

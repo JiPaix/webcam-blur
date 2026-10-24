@@ -1,5 +1,7 @@
 # Webcam Blur
 
+[![tests](https://github.com/JiPaix/webcam-blur/actions/workflows/tests.yml/badge.svg)](https://github.com/JiPaix/webcam-blur/actions/workflows/tests.yml)
+
 Background blur for any webcam on Linux, usable in **every** app (Discord, Zoom,
 Teams, Meet, OBS, browsers…).
 
@@ -58,8 +60,10 @@ sudo pacman -S python-onnx python-onnxruntime-cuda   # NVIDIA
 Then start **Webcam Blur** from your app menu. Tick *Start at login* in its tray menu
 to keep it running.
 
-The `v4l2loopback` kernel module ships with some kernels (e.g. CachyOS). For other
-kernels, install `v4l2loopback-dkms`.
+The `v4l2loopback` kernel module (**version 0.13 or newer**) ships with some kernels
+(e.g. CachyOS). For other kernels, install `v4l2loopback-dkms`. Ubuntu 24.04 only
+packages 0.12, which cannot create virtual cameras at runtime: build a newer
+v4l2loopback from source there.
 
 ### Other distributions / from source
 
