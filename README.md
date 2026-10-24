@@ -93,7 +93,7 @@ Most settings are in the tray menu. They are stored in
 | `use_gpu` | `true` / `false` |
 | `language` | e.g. `"fr"`; `null` follows the system locale |
 | `cameras.<id>.blur` | blur on/off for this camera |
-| `cameras.<id>.virtual` | create a virtual camera for this webcam |
+| `cameras.<id>.virtual` | `false` to never create a virtual camera for this webcam (greyscale-only devices such as IR face-login cameras are skipped automatically) |
 | `cameras.<id>.width` / `height` / `fps` | force a capture mode (default: 1280x720 if available) |
 
 ## Limitations

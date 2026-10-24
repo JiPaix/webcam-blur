@@ -63,6 +63,7 @@ class Manager(QObject):
         self.workers = {}   # camera key -> CameraWorker
         self.orphans = {}   # camera key -> device nr still open by an app, to remove later
         self.cameras = {}   # camera key -> Camera currently plugged in
+        self.skipped = set()  # keys of capture devices without colour formats (IR cameras…)
         self.error = None
         try:
             self.control = v4l2.LoopbackControl()
@@ -105,6 +106,15 @@ class Manager(QObject):
         self.changed.emit()
 
     def add(self, cam):
+        if cam.key in self.skipped:
+            return
+        try:
+            modes = v4l2.capture_modes(cam.path)
+        except OSError:
+            return  # not ready yet; next sync retries
+        if not any(modes.values()):
+            self.skipped.add(cam.key)  # e.g. infrared face-login cameras (greyscale only)
+            return
         try:
             nr = self.orphans.pop(cam.key, None)
             if nr is None:
@@ -176,14 +186,6 @@ class Tray:
         act.setChecked(self.config["use_gpu"])
         act.toggled.connect(lambda on: self.config.__setitem__("use_gpu", on))
 
-        if self.manager.cameras:
-            sub = m.addMenu(tr("menu.cameras"))
-            for key, cam in sorted(self.manager.cameras.items(), key=lambda kv: kv[1].name):
-                act = QAction(cam.name, sub, checkable=True)
-                act.setChecked(self.config.camera(key)["virtual"])
-                act.toggled.connect(lambda on, k=key: self.set_camera(k, "virtual", on))
-                sub.addAction(act)
-
         m.addSeparator()
         act = m.addAction(tr("menu.autostart"))
         act.setCheckable(True)
@@ -194,8 +196,6 @@ class Tray:
     def set_camera(self, key, setting, on):
         self.config.camera(key)[setting] = on
         self.config.save()
-        if setting == "virtual":
-            self.manager.sync()
         self.refresh()
 
     def on_activated(self, reason):
@@ -206,7 +206,7 @@ class Tray:
                 act.setChecked(not any_on)
 
     def refresh(self):
-        camera_set = (tuple(sorted(self.manager.workers)), tuple(sorted(self.manager.cameras)))
+        camera_set = tuple(sorted(self.manager.workers))
         if camera_set != self.camera_set:
             self.camera_set = camera_set
             self.build_menu()

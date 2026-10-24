@@ -10,7 +10,6 @@
   "menu.no_cameras": "Aucune webcam détectée",
   "menu.strength": "Intensité du flou",
   "menu.use_gpu": "Utiliser le GPU",
-  "menu.cameras": "Caméras virtuelles",
   "menu.autostart": "Lancer à l'ouverture de session",
   "menu.quit": "Quitter",
 
