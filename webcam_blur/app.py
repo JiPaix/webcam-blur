@@ -114,12 +114,8 @@ class Tray:
             group.addAction(act)
             sub.addAction(act)
 
-        # Only offered where the startup check ran a model on the GPU successfully.
+        # GPU options are only offered where the startup check ran a model on the GPU.
         if gpucheck.gpu_support.state == "ok":
-            act = m.addAction(tr("menu.use_gpu"))
-            act.setCheckable(True)
-            act.setChecked(self.config["use_gpu"])
-            act.toggled.connect(lambda on: self.config.__setitem__("use_gpu", on))
             sub = m.addMenu(tr("menu.quality"))
             group = QActionGroup(sub)
             for key in QUALITIES:
@@ -128,6 +124,10 @@ class Tray:
                 act.triggered.connect(lambda _=False, k=key: self.config.__setitem__("quality", k))
                 group.addAction(act)
                 sub.addAction(act)
+            act = m.addAction(tr("menu.use_gpu"))
+            act.setCheckable(True)
+            act.setChecked(self.config["use_gpu"])
+            act.toggled.connect(lambda on: self.config.__setitem__("use_gpu", on))
         elif gpucheck.gpu_support.state == "no_onnx":
             m.addAction(tr("menu.use_gpu_needs_onnx")).setEnabled(False)
 
