@@ -81,7 +81,7 @@ jobs:
           path: ${{ env.XDG_DATA_HOME }}/webcam-blur/models
           key: rvm-models-v1
       - name: Download models
-        run: python -c "import sys; sys.path.insert(0, '.'); from webcam_blur import matting; matting.ensure_models()"
+        run: python -c "import sys; sys.path.insert(0, '.'); from webcam_blur import models; models.ensure_models()"
       - name: End-to-end tests (as root, for the device nodes)
         run: sudo -E env "PATH=$PATH" python -m pytest -m v4l2 -v -s
         env:
