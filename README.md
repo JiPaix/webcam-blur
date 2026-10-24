@@ -55,7 +55,8 @@ menu.
 
 ## Getting started
 
-1. **Install it.** See [Installation](#installation) below.
+1. **Install it.** On Arch: `yay -S webcam-blur`. Other systems: see
+   [Installation](#installation) below.
 2. **Start "Webcam Blur"** from your applications menu. A webcam icon appears in the
    tray. Tick *Start at login* to have it every time.
 3. **In your video app, select the camera ending in "(blur)"** instead of your
@@ -107,11 +108,17 @@ on your face rather than behind you, help a lot. *High* quality helps a bit.
 
 ### Arch Linux and derivatives
 
-A PKGBUILD is in [`packaging/arch`](packaging/arch):
+Webcam Blur is in the [AUR](https://aur.archlinux.org/packages/webcam-blur):
 
 ```sh
-git clone https://github.com/JiPaix/webcam-blur
-cd webcam-blur/packaging/arch
+yay -S webcam-blur      # or paru -S webcam-blur, or any AUR helper
+```
+
+Without an AUR helper:
+
+```sh
+git clone https://aur.archlinux.org/webcam-blur.git
+cd webcam-blur
 makepkg -si
 ```
 

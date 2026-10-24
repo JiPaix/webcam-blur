@@ -51,3 +51,18 @@ The end-to-end tests feed a fake webcam (a loopback device playing a test portra
 the real app logic and check the virtual camera it produces. They create and remove
 their own loopback devices and leave your real webcams alone. CI runs everything,
 against v4l2loopback 0.15 and its development branch. It also builds and tests the Arch package.
+
+## Releasing
+
+1. Bump `__version__` in `webcam_blur/__init__.py` and `pkgver` in
+   `packaging/arch/PKGBUILD`, and commit.
+2. Tag and push: `git tag -a v0.1.2 -m v0.1.2 && git push origin main v0.1.2`.
+
+The [release workflow](.github/workflows/release.yml) then:
+- builds and checks the package from the release tarball;
+- publishes it to the [AUR](https://aur.archlinux.org/packages/webcam-blur);
+- creates the GitHub release;
+- commits the tarball's checksum to `packaging/arch/PKGBUILD`.
+
+It needs the repository secret `AUR_SSH_PRIVATE_KEY`: a private SSH key whose public
+half is registered on the maintainer's AUR account.

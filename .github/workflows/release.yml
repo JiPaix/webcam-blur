@@ -1,0 +1,105 @@
+name: release
+
+# Push a tag like v0.1.2 (matching webcam_blur.__version__) to publish that version:
+# the package is built and checked from the release tarball exactly as AUR users will
+# build it, then pushed to the AUR, and a GitHub release is created.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  aur:
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Tools and dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git openssh github-cli namcap \
+            python-build python-installer python-setuptools python-wheel \
+            python-numpy python-opencv python-onnxruntime-cpu python-pyqt6 python-pyudev python-onnx
+
+      - uses: actions/checkout@v4
+
+      - name: Version from the tag
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          version="${GITHUB_REF_NAME#v}"
+          grep -q "__version__ = \"$version\"" webcam_blur/__init__.py \
+            || { echo "::error::tag $GITHUB_REF_NAME does not match webcam_blur/__init__.py"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Point the PKGBUILD at this release
+        working-directory: packaging/arch
+        run: |
+          curl -fsSL -o release.tar.gz "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/v$VERSION.tar.gz"
+          sum=$(sha256sum release.tar.gz | cut -d' ' -f1)
+          rm release.tar.gz
+          sed -i -e "s/^pkgver=.*/pkgver=$VERSION/" -e "s/^pkgrel=.*/pkgrel=1/" \
+                 -e "0,/^sha256sums=('[^']*'/s//sha256sums=('$sum'/" PKGBUILD
+          grep -E "^(pkgver|pkgrel|sha256sums)" -A1 PKGBUILD
+
+      - name: Build and check, as an AUR user would
+        run: |
+          useradd -m builder
+          chown -R builder .
+          cd packaging/arch
+          sudo -u builder makepkg --noconfirm
+          namcap PKGBUILD
+          namcap ./*.pkg.tar.zst | tee namcap.txt
+          ! grep -E '^webcam-blur E:' namcap.txt
+          sudo -u builder makepkg --printsrcinfo > .SRCINFO
+          cat .SRCINFO
+
+      - name: Publish to the AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          # Pinned host key; fingerprint SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4,
+          # as published on https://aur.archlinux.org
+          echo "aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN" > ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          git clone ssh://aur@aur.archlinux.org/webcam-blur.git aur
+          cp packaging/arch/PKGBUILD packaging/arch/webcam-blur.install packaging/arch/.SRCINFO aur/
+          cd aur
+          git config user.name "JiPaix"
+          git config user.email "26584973+JiPaix@users.noreply.github.com"
+          git add PKGBUILD webcam-blur.install .SRCINFO
+          if git diff --cached --quiet; then
+            echo "The AUR already has this version."
+          else
+            git commit -m "Update to $VERSION"
+            git push origin HEAD:master
+          fi
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "Webcam Blur $VERSION" --generate-notes
+
+      - name: Keep the repository's PKGBUILD in sync
+        run: |
+          git checkout -- . 2>/dev/null || true
+          git fetch origin main
+          git checkout -B main origin/main
+          cd packaging/arch
+          curl -fsSL -o release.tar.gz "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/v$VERSION.tar.gz"
+          sum=$(sha256sum release.tar.gz | cut -d' ' -f1)
+          rm release.tar.gz
+          sed -i -e "s/^pkgver=.*/pkgver=$VERSION/" -e "s/^pkgrel=.*/pkgrel=1/" \
+                 -e "0,/^sha256sums=('[^']*'/s//sha256sums=('$sum'/" PKGBUILD
+          cd ../..
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet packaging/arch/PKGBUILD; then
+            git commit -m "PKGBUILD: checksum of v$VERSION" packaging/arch/PKGBUILD
+            git push origin main
+          fi
