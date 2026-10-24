@@ -1,5 +1,9 @@
 """Kernel ABI constants and pure helpers (no device needed)."""
 
+import errno
+
+import pytest
+
 from webcam_blur import v4l2
 
 
@@ -39,3 +43,48 @@ def test_pick_mode_falls_back_to_largest_within_limit():
 
 def test_pick_mode_without_known_formats():
     assert v4l2.pick_mode({}) == ("MJPG", 640, 480)
+
+
+class FakeIoctl:
+    """Simulates a v4l2loopback control device that only knows one set of request numbers."""
+
+    def __init__(self, legacy_driver):
+        self.known = {r[1] if legacy_driver else r[0]
+                      for r in (v4l2.LOOPBACK_CTL_ADD, v4l2.LOOPBACK_CTL_REMOVE, v4l2.LOOPBACK_CTL_QUERY)}
+        self.calls = []
+
+    def __call__(self, fd, request, arg=0, mutate=True):
+        self.calls.append(request)
+        if request not in self.known:
+            raise OSError(errno.ENOTTY, "Inappropriate ioctl for device")
+        return 7
+
+
+def control_with(monkeypatch, fake):
+    monkeypatch.setattr(v4l2.fcntl, "ioctl", fake)
+    monkeypatch.setattr(v4l2, "_wait_node", lambda path: None)
+    ctl = object.__new__(v4l2.LoopbackControl)
+    ctl.fd, ctl.legacy = -1, None
+    return ctl
+
+
+@pytest.mark.parametrize("legacy_driver", [False, True], ids=["current", "0.13-0.14"])
+def test_control_requests_for_each_driver_generation(monkeypatch, legacy_driver):
+    fake = FakeIoctl(legacy_driver)
+    ctl = control_with(monkeypatch, fake)
+    assert ctl.add("Cam (blur)") == 7
+    assert ctl.legacy is legacy_driver
+    assert ctl.remove(7) is True
+    # Once detected, the right generation is used directly, without a failing first try.
+    assert fake.calls[-1] == v4l2.LOOPBACK_CTL_REMOVE[1 if legacy_driver else 0]
+    assert len(fake.calls) == (3 if legacy_driver else 2)
+
+
+def test_control_does_not_mask_real_errors(monkeypatch):
+    def busy(fd, request, arg=0, mutate=True):
+        raise OSError(errno.EBUSY, "Device or resource busy")
+    ctl = control_with(monkeypatch, busy)
+    ctl.legacy = False
+    assert ctl.remove(7) is False  # EBUSY: still open somewhere
+    with pytest.raises(OSError):
+        ctl.add("Cam (blur)")

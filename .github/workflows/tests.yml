@@ -51,11 +51,13 @@ jobs:
   integration:
     name: integration (v4l2loopback ${{ matrix.v4l2loopback }})
     runs-on: ubuntu-24.04
+    # v4l2loopback 0.13/0.14 (legacy control ioctls) no longer build on current kernels;
+    # their code path is covered by a unit test. "main" warns early about upcoming changes.
+    continue-on-error: ${{ matrix.v4l2loopback == 'main' }}
     strategy:
       fail-fast: false
       matrix:
-        # 0.13 is the first version with /dev/v4l2loopback (older ioctl numbers).
-        v4l2loopback: ["v0.13.2", "v0.15.4"]
+        v4l2loopback: ["v0.15.4", "main"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -89,8 +91,10 @@ jobs:
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
     steps:
-      - name: Tools
-        run: pacman -Syu --noconfirm --needed git namcap python-build python-installer python-setuptools python-wheel
+      - name: Tools and dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git namcap python-build python-installer python-setuptools python-wheel \
+            python-numpy python-opencv python-onnxruntime-cpu python-pyqt6 python-pyudev python-onnx python-pytest
       - uses: actions/checkout@v4
       - name: Build the package from this commit
         run: |
@@ -103,8 +107,8 @@ jobs:
           namcap build/arch/PKGBUILD
           namcap build/arch/*.pkg.tar.zst | tee namcap.txt
           ! grep -E '^webcam-blur E:' namcap.txt
-      - name: Install with its dependencies
-        run: pacman -U --noconfirm build/arch/*.pkg.tar.zst && pacman -S --noconfirm --asdeps python-onnx python-pytest
+      - name: Install
+        run: pacman -U --noconfirm build/arch/*.pkg.tar.zst
       - name: Test the installed package
         run: |
           test -f /usr/lib/udev/rules.d/60-webcam-blur.rules

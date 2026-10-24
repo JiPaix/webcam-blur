@@ -30,7 +30,8 @@ the suffix.
 
 ## Code
 
-- `webcam_blur/app.py`: tray icon and menu, matching virtual cameras to webcams.
+- `webcam_blur/app.py`: tray icon and menu.
+- `webcam_blur/manager.py`: matches virtual cameras to plugged-in webcams.
 - `webcam_blur/worker.py`: one thread per webcam (capture → blur → virtual camera).
 - `webcam_blur/matting.py`: RVM models (CPU, and the GPU subprocess).
 - `webcam_blur/v4l2.py`: kernel interfaces (v4l2loopback control, output, webcam modes).
@@ -49,4 +50,4 @@ python -m pytest -m v4l2         # end-to-end: needs v4l2loopback >= 0.13 and ac
 The end-to-end tests feed a fake webcam (a loopback device playing a test portrait) to
 the real app logic and check the virtual camera it produces. They create and remove
 their own loopback devices and leave your real webcams alone. CI runs everything,
-against v4l2loopback 0.13 and 0.15. It also builds and tests the Arch package.
+against v4l2loopback 0.15 and its development branch. It also builds and tests the Arch package.
