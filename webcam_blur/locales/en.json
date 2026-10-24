@@ -1,0 +1,42 @@
+{
+  "_language": "English",
+  "_translators": [],
+
+  "app.name": "Webcam Blur",
+  "app.tooltip_title": "Webcam Blur",
+  "virtual_camera.label": "{name} (blur)",
+
+  "menu.camera": "Blur {name}  ({status})",
+  "menu.no_cameras": "No webcam detected",
+  "menu.strength": "Blur strength",
+  "menu.use_gpu": "Use GPU",
+  "menu.cameras": "Virtual cameras",
+  "menu.autostart": "Start at login",
+  "menu.quit": "Quit",
+
+  "strength.light": "Light",
+  "strength.medium": "Medium",
+  "strength.strong": "Strong",
+
+  "status.idle": "idle",
+  "status.in_use": "in use, {engine}",
+  "status.error": "unavailable: {error}",
+  "status.disabled": "disabled",
+
+  "engine.gpu": "GPU",
+  "engine.cpu": "CPU",
+  "engine.gpu_starting": "CPU, GPU starting…",
+  "engine.gpu_preparing": "CPU, preparing GPU model…",
+  "engine.gpu_compiling": "CPU, compiling GPU model (first time only, ~2 min)…",
+  "engine.gpu_error": "CPU, GPU error: {error}",
+  "engine.no_gpu": "CPU, no supported GPU",
+  "engine.no_onnx": "CPU, install python-onnx for GPU",
+
+  "tooltip.camera": "{name}: blur {state}, {status}",
+  "tooltip.on": "on",
+  "tooltip.off": "off",
+
+  "error.no_control": "Cannot create virtual cameras ({error}). Is the v4l2loopback module loaded and the udev rule installed?",
+  "error.open_camera": "cannot open the webcam (used by another app?)",
+  "error.read_camera": "the webcam stopped sending images"
+}

@@ -1,0 +1,42 @@
+{
+  "_language": "Français",
+  "_translators": [],
+
+  "app.name": "Flou webcam",
+  "app.tooltip_title": "Flou webcam",
+  "virtual_camera.label": "{name} (flou)",
+
+  "menu.camera": "Flou {name}  ({status})",
+  "menu.no_cameras": "Aucune webcam détectée",
+  "menu.strength": "Intensité du flou",
+  "menu.use_gpu": "Utiliser le GPU",
+  "menu.cameras": "Caméras virtuelles",
+  "menu.autostart": "Lancer à l'ouverture de session",
+  "menu.quit": "Quitter",
+
+  "strength.light": "Léger",
+  "strength.medium": "Moyen",
+  "strength.strong": "Fort",
+
+  "status.idle": "inactive",
+  "status.in_use": "en cours d'utilisation, {engine}",
+  "status.error": "indisponible : {error}",
+  "status.disabled": "désactivée",
+
+  "engine.gpu": "GPU",
+  "engine.cpu": "CPU",
+  "engine.gpu_starting": "CPU, démarrage du GPU…",
+  "engine.gpu_preparing": "CPU, préparation du modèle GPU…",
+  "engine.gpu_compiling": "CPU, compilation du modèle GPU (une seule fois, ~2 min)…",
+  "engine.gpu_error": "CPU, erreur GPU : {error}",
+  "engine.no_gpu": "CPU, aucun GPU pris en charge",
+  "engine.no_onnx": "CPU, installer python-onnx pour le GPU",
+
+  "tooltip.camera": "{name} : flou {state}, {status}",
+  "tooltip.on": "activé",
+  "tooltip.off": "désactivé",
+
+  "error.no_control": "Impossible de créer les caméras virtuelles ({error}). Le module v4l2loopback est-il chargé et la règle udev installée ?",
+  "error.open_camera": "impossible d'ouvrir la webcam (utilisée par une autre application ?)",
+  "error.read_camera": "la webcam n'envoie plus d'images"
+}

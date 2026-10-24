@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Webcam Blur
+Name[fr]=Flou webcam
+Comment=Background blur for your webcams, in every app
+Comment[fr]=Floutage d'arrière-plan pour vos webcams, dans toutes les applications
+Exec=webcam-blur
+Icon=camera-web
+Terminal=false
+Categories=AudioVideo;Video;Utility;
+Keywords=webcam;camera;blur;background;virtual;

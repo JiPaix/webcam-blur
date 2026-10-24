@@ -1,0 +1,3 @@
+# Let the logged-in user create and remove v4l2loopback virtual cameras at runtime
+# (webcam-blur adds one per plugged-in webcam).
+SUBSYSTEM=="misc", KERNEL=="v4l2loopback", TAG+="uaccess"
