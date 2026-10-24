@@ -1,6 +1,6 @@
 # Maintainer: JiPaix <https://github.com/JiPaix>
 pkgname=webcam-blur
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Background blur for any webcam, as virtual cameras usable in every app (tray toggle, GPU accelerated)"
 arch=('any')
@@ -21,7 +21,7 @@ source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
         "$_ncnn/rvm_mobilenetv3.ncnn.bin"
         "$_ncnn/rvm_resnet50.ncnn.param"
         "$_ncnn/rvm_resnet50.ncnn.bin")
-sha256sums=('2f783a14c030651696b9a13742051c79fe8a2d43884a7a33f192b07d46984a1a'
+sha256sums=('47f99a1a656789c4347808def29b327ce2ddbc00222cf5abb0f3be7485529499'
             '88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828'
             '25db300fcb6ee27f941a1b52c97856e8d1f13c7f35817f81a612f89af0e8a85c'
             '7064b3781bc7652d01e10fc5684349fb4c0df700a4841b032835fbd15275d8d5'
